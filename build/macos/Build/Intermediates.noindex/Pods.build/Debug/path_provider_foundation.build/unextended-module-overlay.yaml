@@ -4,20 +4,20 @@
   "case-sensitive": false,
   "roots": [{
     "type": "directory",
-    "name": "/Users/Dylan/Documents/GitHub/taskmanager/taskmanager/build/macos/Build/Products/Debug/path_provider_foundation/path_provider_foundation.framework/Modules",
+    "name": "/Users/Dylan/Documents/GitHub/taskmanager/build/macos/Build/Products/Debug/path_provider_foundation/path_provider_foundation.framework/Modules",
     "contents": [{
       "type": "file",
       "name": "module.modulemap",
-      "external-contents": "/Users/Dylan/Documents/GitHub/taskmanager/taskmanager/build/macos/Build/Intermediates.noindex/Pods.build/Debug/path_provider_foundation.build/unextended-module.modulemap",
+      "external-contents": "/Users/Dylan/Documents/GitHub/taskmanager/build/macos/Build/Intermediates.noindex/Pods.build/Debug/path_provider_foundation.build/unextended-module.modulemap",
     }]
     },
     {
     "type": "directory",
-    "name": "/Users/Dylan/Documents/GitHub/taskmanager/taskmanager/build/macos/Build/Products/Debug/path_provider_foundation/path_provider_foundation.framework/Headers",
+    "name": "/Users/Dylan/Documents/GitHub/taskmanager/build/macos/Build/Products/Debug/path_provider_foundation/path_provider_foundation.framework/Headers",
     "contents": [{
       "type": "file",
       "name": "path_provider_foundation-Swift.h",
-      "external-contents": "/Users/Dylan/Documents/GitHub/taskmanager/taskmanager/build/macos/Build/Intermediates.noindex/Pods.build/Debug/path_provider_foundation.build/unextended-interface-header.h",
+      "external-contents": "/Users/Dylan/Documents/GitHub/taskmanager/build/macos/Build/Intermediates.noindex/Pods.build/Debug/path_provider_foundation.build/unextended-interface-header.h",
     }]
   }]
 }

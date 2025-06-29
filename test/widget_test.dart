@@ -11,20 +11,89 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:taskmanager/main.dart';
 
 void main() {
+  group('Project URL Parsing Tests', () {
+    test('should extract base URL from Jira project URL', () {
+      final project = Project(
+        id: 'test-1',
+        name: 'Test Project',
+        description: 'Test Description',
+        type: ProjectType.development,
+        color: Colors.blue,
+        icon: Icons.code,
+        jiraProjectUrl: 'https://company.atlassian.net/jira/software/projects/MOBILE/boards/1',
+        createdAt: DateTime.now(),
+      );
+
+      expect(project.jiraBaseUrl, equals('https://company.atlassian.net'));
+    });
+
+    test('should extract project key from Jira project URL', () {
+      final project = Project(
+        id: 'test-1',
+        name: 'Test Project',
+        description: 'Test Description',
+        type: ProjectType.development,
+        color: Colors.blue,
+        icon: Icons.code,
+        jiraProjectUrl: 'https://company.atlassian.net/jira/software/projects/MOBILE/boards/1',
+        createdAt: DateTime.now(),
+      );
+
+      expect(project.extractedJiraProjectKey, equals('MOBILE'));
+    });
+
+    test('should extract project key from browse URL', () {
+      final project = Project(
+        id: 'test-1',
+        name: 'Test Project',
+        description: 'Test Description',
+        type: ProjectType.development,
+        color: Colors.blue,
+        icon: Icons.code,
+        jiraProjectUrl: 'https://company.atlassian.net/browse/API-123',
+        createdAt: DateTime.now(),
+      );
+
+      expect(project.extractedJiraProjectKey, equals('API'));
+    });
+
+    test('should return null for invalid URL', () {
+      final project = Project(
+        id: 'test-1',
+        name: 'Test Project',
+        description: 'Test Description',
+        type: ProjectType.development,
+        color: Colors.blue,
+        icon: Icons.code,
+        jiraProjectUrl: 'invalid-url',
+        createdAt: DateTime.now(),
+      );
+
+      expect(project.jiraBaseUrl, isNull);
+    });
+
+    test('should use manual project key when URL parsing fails', () {
+      final project = Project(
+        id: 'test-1',
+        name: 'Test Project',
+        description: 'Test Description',
+        type: ProjectType.development,
+        color: Colors.blue,
+        icon: Icons.code,
+        jiraProjectUrl: 'https://company.atlassian.net/some/other/path',
+        jiraProjectKey: 'MANUAL',
+        createdAt: DateTime.now(),
+      );
+
+      expect(project.extractedJiraProjectKey, equals('MANUAL'));
+    });
+  });
+
   testWidgets('Counter increments smoke test', (WidgetTester tester) async {
     // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+    await tester.pumpWidget(const TaskManagerApp());
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // Verify that the dashboard is displayed
+    expect(find.text('DASHBOARD'), findsOneWidget);
   });
 }
