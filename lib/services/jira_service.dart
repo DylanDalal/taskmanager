@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:atlassian_apis/jira_platform.dart';
+import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'dart:convert';
 
@@ -13,6 +14,11 @@ class JiraIssue {
   final String? priority;
   final DateTime? created;
   final DateTime? updated;
+  final String? sprintName;
+  final bool isInActiveSprint;
+  final List<JiraIssue> subtasks;
+  final String? parentKey;
+  final bool isSubtask;
 
   JiraIssue({
     required this.id,
@@ -24,6 +30,11 @@ class JiraIssue {
     this.priority,
     this.created,
     this.updated,
+    this.sprintName,
+    this.isInActiveSprint = false,
+    this.subtasks = const [],
+    this.parentKey,
+    this.isSubtask = false,
   });
 
   // Helper function to extract text from Jira's Atlassian Document Format (ADF)
@@ -86,6 +97,56 @@ class JiraIssue {
   }
 
   factory JiraIssue.fromJiraIssue(IssueBean issue) {
+    // Extract sprint information
+    String? sprintName;
+    bool isInActiveSprint = false;
+    
+    // Check various possible sprint field names
+    var sprintField = issue.fields?['sprint'] ?? issue.fields?['customfield_10020'];
+    if (sprintField != null) {
+      if (sprintField is List && sprintField.isNotEmpty) {
+        // Sprint is usually an array, take the last (most recent) sprint
+        var latestSprint = sprintField.last;
+        if (latestSprint is Map<String, dynamic>) {
+          sprintName = latestSprint['name']?.toString();
+          isInActiveSprint = latestSprint['state']?.toString().toLowerCase() == 'active';
+        }
+      } else if (sprintField is Map<String, dynamic>) {
+        sprintName = sprintField['name']?.toString();
+        isInActiveSprint = sprintField['state']?.toString().toLowerCase() == 'active';
+      }
+    }
+    
+    // Extract subtasks information
+    List<JiraIssue> subtasksList = [];
+    if (issue.fields?['subtasks'] != null && issue.fields!['subtasks'] is List) {
+      for (var subtaskData in issue.fields!['subtasks']) {
+        if (subtaskData is Map<String, dynamic>) {
+          // Create a simplified IssueBean-like structure for subtasks
+          final subtaskIssue = IssueBean(
+            id: subtaskData['id']?.toString(),
+            key: subtaskData['key']?.toString(),
+            fields: {
+              'summary': subtaskData['fields']?['summary'],
+              'status': subtaskData['fields']?['status'],
+              'assignee': subtaskData['fields']?['assignee'],
+              'priority': subtaskData['fields']?['priority'],
+              'created': subtaskData['fields']?['created'],
+              'updated': subtaskData['fields']?['updated'],
+              'issuetype': subtaskData['fields']?['issuetype'],
+              'parent': {'key': issue.key},
+            },
+          );
+          subtasksList.add(JiraIssue.fromJiraIssue(subtaskIssue));
+        }
+      }
+    }
+    
+    // Check if this is a subtask
+    final issueType = issue.fields?['issuetype']?['name']?.toString();
+    final isSubtask = issueType?.toLowerCase() == 'sub-task' || issueType?.toLowerCase() == 'subtask';
+    final parentKey = issue.fields?['parent']?['key']?.toString();
+    
     return JiraIssue(
       id: issue.id ?? '',
       key: issue.key ?? '',
@@ -96,6 +157,11 @@ class JiraIssue {
       priority: issue.fields?['priority']?['name']?.toString(),
       created: issue.fields?['created'] != null ? DateTime.tryParse(issue.fields!['created'].toString()) : null,
       updated: issue.fields?['updated'] != null ? DateTime.tryParse(issue.fields!['updated'].toString()) : null,
+      sprintName: sprintName,
+      isInActiveSprint: isInActiveSprint,
+      subtasks: subtasksList,
+      parentKey: parentKey,
+      isSubtask: isSubtask,
     );
   }
 }
@@ -112,11 +178,21 @@ class JiraService {
   JiraService._internal();
 
   Future<void> _initializeIfNeeded([String? baseUrl]) async {
-    if (_jiraApi != null && _currentBaseUrl == baseUrl) return;
-    
+    // Always reload config to get latest credentials from file
     final config = await _loadConfig();
-    _email = config['JIRA_EMAIL'];
-    _apiToken = config['JIRA_API_TOKEN'];
+    final newEmail = config['JIRA_EMAIL'];
+    final newApiToken = config['JIRA_API_TOKEN'];
+    
+    // Check if credentials have changed or if we need to initialize
+    final credentialsChanged = _email != newEmail || _apiToken != newApiToken;
+    final needsInit = _jiraApi == null || _currentBaseUrl != baseUrl || credentialsChanged;
+    
+    _email = newEmail;
+    _apiToken = newApiToken;
+    
+    if (!needsInit) {
+      return;
+    }
     
     if (_email == null || _apiToken == null) {
       throw Exception('Jira email and API token must be configured. Email: ${_email ?? 'missing'}, Token: ${_apiToken?.substring(0, 10) ?? 'missing'}...');
@@ -144,9 +220,11 @@ class JiraService {
           'JIRA_API_TOKEN': 'ATATT3xFfGF0WpM202ZrjRrJb13hAQEk2fFmGuQtviJt9bCPmXGonC8UVHOosXmozQR1CCIeotqnhlGu9BKxahxHc6OBEF240vvgHO2Gvtn54iFZUwuhfF_uRD9sryQpUcns0CldmGJHZQkfClCdq7BOHufcW49HbvIEwbqyDn9XaIsgu7m0uYI=52E89D40',
         };
       } else {
-        // For desktop/mobile, read from api_keys.txt file
+        // For desktop/mobile, read from api_keys.txt file in the application documents directory
         try {
-          final file = File('api_keys.txt');
+          final directory = await getApplicationDocumentsDirectory();
+          final file = File('${directory.path}/api_keys.txt');
+          
           final contents = await file.readAsString();
           
           final config = <String, String>{};
@@ -154,8 +232,10 @@ class JiraService {
             if (line.trim().isEmpty || line.trim().startsWith('#')) continue;
             
             final parts = line.split('=');
-            if (parts.length == 2) {
-              config[parts[0].trim()] = parts[1].trim();
+            if (parts.length >= 2) {
+              final key = parts[0].trim();
+              final value = parts.sublist(1).join('=').trim();
+              config[key] = value;
             }
           }
           
@@ -189,7 +269,7 @@ class JiraService {
       final searchResult = await _jiraApi!.issueSearch.searchForIssuesUsingJql(
         jql: 'project = $projectKey ORDER BY created DESC',
         maxResults: 50,
-        fields: ['summary', 'description', 'status', 'assignee', 'priority', 'created', 'updated'],
+        fields: ['summary', 'description', 'status', 'assignee', 'priority', 'created', 'updated', 'sprint', 'customfield_10020', 'subtasks', 'parent', 'issuetype'],
       );
 
       if (searchResult.issues != null) {
@@ -214,14 +294,329 @@ class JiraService {
   Future<bool> testConnection(String baseUrl) async {
     try {
       await _initializeIfNeeded(baseUrl);
-      if (_jiraApi == null) return false;
+      if (_jiraApi == null) {
+        return false;
+      }
       
       // Try to get myself info as a connection test (this is a simple authenticated endpoint)
-      await _jiraApi!.myself.getCurrentUser();
+      final user = await _jiraApi!.myself.getCurrentUser();
+      print('Connection test successful! User: ${user.displayName}');
       return true;
     } catch (e) {
       print('Connection test failed: $e');
       return false;
+    }
+  }
+
+  Future<JiraIssue> createIssue({
+    required String baseUrl,
+    required String projectKey,
+    required String summary,
+    required String description,
+    String priority = 'Medium',
+    String issueType = 'Task',
+  }) async {
+    try {
+      await _initializeIfNeeded(baseUrl);
+      
+      if (_jiraApi == null) {
+        throw Exception('Failed to initialize Jira API');
+      }
+
+      print('Creating Jira issue in project: $projectKey');
+
+      // Create the issue using the Jira API
+      final issueUpdateDetails = IssueUpdateDetails(
+        fields: {
+          'project': {
+            'key': projectKey,
+          },
+          'summary': summary,
+          'description': {
+            'type': 'doc',
+            'version': 1,
+            'content': [
+              {
+                'type': 'paragraph',
+                'content': [
+                  {
+                    'type': 'text',
+                    'text': description,
+                  }
+                ]
+              }
+            ]
+          },
+          'issuetype': {
+            'name': issueType,
+          },
+          'priority': {
+            'name': priority,
+          },
+        },
+      );
+
+      final createdIssue = await _jiraApi!.issues.createIssue(
+        body: issueUpdateDetails,
+      );
+
+      print('Successfully created issue: ${createdIssue.key}');
+
+      // Fetch the created issue to get full details
+      final issueBean = await _jiraApi!.issues.getIssue(
+        issueIdOrKey: createdIssue.key!,
+        fields: ['summary', 'description', 'status', 'assignee', 'priority', 'created', 'updated'],
+      );
+
+      return JiraIssue.fromJiraIssue(issueBean);
+    } catch (e) {
+      String errorMessage = 'Error creating Jira issue: $e';
+      print(errorMessage);
+      rethrow;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getAvailableTransitions(String baseUrl, String issueKey) async {
+    try {
+      await _initializeIfNeeded(baseUrl);
+      
+      if (_jiraApi == null) {
+        throw Exception('Failed to initialize Jira API');
+      }
+
+      final transitions = await _jiraApi!.issues.getTransitions(issueIdOrKey: issueKey);
+      
+      return transitions.transitions?.map((transition) => {
+        'id': transition.id,
+        'name': transition.name,
+        'to': transition.to?.name,
+      }).toList() ?? [];
+    } catch (e) {
+      print('Error getting transitions: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> transitionIssue(String baseUrl, String issueKey, String transitionId) async {
+    try {
+      await _initializeIfNeeded(baseUrl);
+      
+      if (_jiraApi == null) {
+        throw Exception('Failed to initialize Jira API');
+      }
+
+      await _jiraApi!.issues.doTransition(
+        issueIdOrKey: issueKey,
+        body: IssueUpdateDetails(
+          transition: IssueTransition(id: transitionId),
+        ),
+      );
+    } catch (e) {
+      print('Error transitioning issue: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> assignIssueToMe(String baseUrl, String issueKey) async {
+    try {
+      await _initializeIfNeeded(baseUrl);
+      
+      if (_jiraApi == null) {
+        throw Exception('Failed to initialize Jira API');
+      }
+
+      // Get current user info
+      final user = await _jiraApi!.myself.getCurrentUser();
+      
+      await _jiraApi!.issues.editIssue(
+        issueIdOrKey: issueKey,
+        body: IssueUpdateDetails(
+          fields: {
+            'assignee': {
+              'accountId': user.accountId,
+            },
+          },
+        ),
+      );
+    } catch (e) {
+      print('Error assigning issue: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> addComment(String baseUrl, String issueKey, String commentText) async {
+    try {
+      await _initializeIfNeeded(baseUrl);
+      
+      if (_jiraApi == null) {
+        throw Exception('Failed to initialize Jira API');
+      }
+
+      await _jiraApi!.issueComments.addComment(
+        issueIdOrKey: issueKey,
+        body: Comment(
+          body: {
+            'type': 'doc',
+            'version': 1,
+            'content': [
+              {
+                'type': 'paragraph',
+                'content': [
+                  {
+                    'type': 'text',
+                    'text': commentText,
+                  }
+                ]
+              }
+            ]
+          },
+        ),
+      );
+    } catch (e) {
+      print('Error adding comment: $e');
+      rethrow;
+    }
+  }
+
+  Future<JiraIssue> createSubtask({
+    required String baseUrl,
+    required String projectKey,
+    required String parentIssueKey,
+    required String summary,
+    String priority = 'Medium',
+  }) async {
+    try {
+      await _initializeIfNeeded(baseUrl);
+      
+      if (_jiraApi == null) {
+        throw Exception('Failed to initialize Jira API');
+      }
+
+      print('Creating Jira subtask for parent: $parentIssueKey');
+
+      // Create the subtask using the Jira API (only use Sub-task issue type)
+      final issueUpdateDetails = IssueUpdateDetails(
+        fields: {
+          'project': {
+            'key': projectKey,
+          },
+          'parent': {
+            'key': parentIssueKey,
+          },
+          'summary': summary, // Only summary field, no separate description
+          'issuetype': {
+            'name': 'subtask',
+          },
+          'priority': {
+            'name': priority,
+          },
+        },
+      );
+
+      final createdIssue = await _jiraApi!.issues.createIssue(
+        body: issueUpdateDetails,
+      );
+
+      print('Successfully created subtask: ${createdIssue.key}');
+
+      // Fetch the created subtask to get full details
+      final issueBean = await _jiraApi!.issues.getIssue(
+        issueIdOrKey: createdIssue.key!,
+        fields: ['summary', 'status', 'assignee', 'priority', 'created', 'updated', 'parent', 'issuetype'],
+      );
+
+      return JiraIssue.fromJiraIssue(issueBean);
+    } catch (e) {
+      String errorMessage = 'Error creating Jira subtask: $e';
+      print(errorMessage);
+      rethrow;
+    }
+  }
+
+  Future<void> editIssue({
+    required String baseUrl,
+    required String issueKey,
+    required String summary,
+    String? description,
+    String? priority,
+  }) async {
+    try {
+      await _initializeIfNeeded(baseUrl);
+      
+      if (_jiraApi == null) {
+        throw Exception('Failed to initialize Jira API');
+      }
+
+      print('Editing Jira issue: $issueKey');
+
+      Map<String, dynamic> fieldsToUpdate = {
+        'summary': summary,
+      };
+
+      if (description != null && description.isNotEmpty) {
+        fieldsToUpdate['description'] = {
+          'type': 'doc',
+          'version': 1,
+          'content': [
+            {
+              'type': 'paragraph',
+              'content': [
+                {
+                  'type': 'text',
+                  'text': description,
+                }
+              ]
+            }
+          ]
+        };
+      }
+
+      if (priority != null && priority.isNotEmpty) {
+        fieldsToUpdate['priority'] = {
+          'name': priority,
+        };
+      }
+
+      final issueUpdateDetails = IssueUpdateDetails(
+        fields: fieldsToUpdate,
+      );
+
+      await _jiraApi!.issues.editIssue(
+        issueIdOrKey: issueKey,
+        body: issueUpdateDetails,
+      );
+
+      print('Successfully edited issue: $issueKey');
+    } catch (e) {
+      String errorMessage = 'Error editing Jira issue: $e';
+      print(errorMessage);
+      rethrow;
+    }
+  }
+
+  Future<void> deleteIssue({
+    required String baseUrl,
+    required String issueKey,
+  }) async {
+    try {
+      await _initializeIfNeeded(baseUrl);
+      
+      if (_jiraApi == null) {
+        throw Exception('Failed to initialize Jira API');
+      }
+
+      print('Deleting Jira issue: $issueKey');
+
+      await _jiraApi!.issues.deleteIssue(
+        issueIdOrKey: issueKey,
+        deleteSubtasks: 'true', // Delete subtasks as well
+      );
+
+      print('Successfully deleted issue: $issueKey');
+    } catch (e) {
+      String errorMessage = 'Error deleting Jira issue: $e';
+      print(errorMessage);
+      rethrow;
     }
   }
 } 
