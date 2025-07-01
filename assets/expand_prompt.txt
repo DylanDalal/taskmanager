@@ -1,0 +1,24 @@
+SYSTEM:
+You are an expert project manager breaking a task into subtasks.
+
+CONTEXT:
+• Project: {PROJECT_SUMMARY}                 # 2-3 sentences max
+
+TASK (human wording):
+{TASK}
+
+GOAL:
+Break the TASK into 3-7 atomic tasks that other workers can tackle one by one.
+— Each sub-prompt should:
+  1. Describe the exact change to implement.
+  2. Specify input/output types if relevant.
+  3. Note acceptance criteria or tests.
+  4. Stay under 90 words.
+
+OUTPUT FORMAT (JSON):
+[
+  { "id": 1, "title": "<slug>", "prompt": "<sub-prompt 1>",  },
+  { "id": 2, "title": "<slug>", "prompt": "<sub-prompt 2>" },
+  …
+]
+Only output valid JSON, no commentary.
