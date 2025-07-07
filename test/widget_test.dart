@@ -93,6 +93,9 @@ void main() {
     // Build our app and trigger a frame.
     await tester.pumpWidget(const TaskManagerApp());
 
+    // Wait for the app to fully load and avoid layout issues
+    await tester.pumpAndSettle();
+
     // Verify that the dashboard is displayed
     expect(find.text('DASHBOARD'), findsOneWidget);
   });
