@@ -253,9 +253,9 @@ JIRA_API_TOKEN=$testApiToken
       });
     });
 
-    group('JiraIssue Model', () {
-      test('creates JiraIssue from IssueBean correctly', () {
-        // Test the fromJiraIssue factory method
+    group('Task Model', () {
+    test('creates Task from IssueBean correctly', () {
+      // Test the fromJiraIssue factory method
         final mockIssue = MockIssueBean();
         when(mockIssue.id).thenReturn('TEST-1');
         when(mockIssue.key).thenReturn('TEST-1');
@@ -269,14 +269,14 @@ JIRA_API_TOKEN=$testApiToken
           'updated': '2023-01-02T10:00:00.000Z',
         });
 
-        final jiraIssue = JiraIssue.fromJiraIssue(mockIssue);
-        
-        expect(jiraIssue.id, equals('TEST-1'));
-        expect(jiraIssue.key, equals('TEST-1'));
-        expect(jiraIssue.summary, equals('Test Issue Summary'));
-        expect(jiraIssue.status, equals('In Progress'));
-        expect(jiraIssue.assignee, equals('John Doe'));
-        expect(jiraIssue.priority, equals('High'));
+                final task = Task.fromJiraIssue(mockIssue, 'TEST');
+
+        expect(task.id, equals('TEST-1'));
+        expect(task.key, equals('TEST-1'));
+        expect(task.title, equals('Test Issue Summary'));
+        expect(task.status, equals('In Progress'));
+        expect(task.assignee, equals('John Doe'));
+        expect(task.priority, equals('High'));
       });
 
       test('handles missing fields gracefully', () {
@@ -288,13 +288,13 @@ JIRA_API_TOKEN=$testApiToken
           'summary': 'Minimal Issue',
         });
 
-        final jiraIssue = JiraIssue.fromJiraIssue(mockIssue);
-        
-        expect(jiraIssue.id, equals('TEST-1'));
-        expect(jiraIssue.summary, equals('Minimal Issue'));
-        expect(jiraIssue.description, isNull);
-        expect(jiraIssue.assignee, isNull);
-        expect(jiraIssue.priority, isNull);
+                final task = Task.fromJiraIssue(mockIssue, 'TEST');
+
+        expect(task.id, equals('TEST-1'));
+        expect(task.title, equals('Minimal Issue'));
+        expect(task.description, isNull);
+        expect(task.assignee, isNull);
+        expect(task.priority, isNull);
       });
 
       test('extracts text from Atlassian Document Format correctly', () {
@@ -320,8 +320,8 @@ JIRA_API_TOKEN=$testApiToken
           'description': adfContent,
         });
 
-        final jiraIssue = JiraIssue.fromJiraIssue(mockIssue);
-        expect(jiraIssue.description, contains('This is a test description.'));
+        final task = Task.fromJiraIssue(mockIssue, 'TEST');
+        expect(task.description, contains('This is a test description.'));
       });
     });
 

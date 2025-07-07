@@ -4,38 +4,179 @@ import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'dart:convert';
 
-class JiraIssue {
+enum Priority { low, medium, high, critical }
+
+class Task {
   final String id;
   final String key;
-  final String summary;
+  final String title; // This maps to summary from Jira
   final String? description;
   final String status;
   final String? assignee;
   final String? priority;
-  final DateTime? created;
+  final DateTime? createdAt; // This maps to created from Jira
   final DateTime? updated;
   final String? sprintName;
   final bool isInActiveSprint;
-  final List<JiraIssue> subtasks;
+  final List<Task> subtasks;
   final String? parentKey;
   final bool isSubtask;
+  final String projectId;
+  final String? jiraTicketId; // This will be the same as key for Jira issues
+  final Priority priorityEnum;
 
-  JiraIssue({
+  Task({
     required this.id,
     required this.key,
-    required this.summary,
+    required this.title,
     this.description,
     required this.status,
     this.assignee,
     this.priority,
-    this.created,
+    this.createdAt,
     this.updated,
     this.sprintName,
     this.isInActiveSprint = false,
     this.subtasks = const [],
     this.parentKey,
     this.isSubtask = false,
+    required this.projectId,
+    this.jiraTicketId,
+    this.priorityEnum = Priority.medium,
   });
+
+  // Getter for isCompleted - checks if status is "Done"
+  bool get isCompleted {
+    return status.toLowerCase() == 'done' || 
+           status.toLowerCase() == 'closed' ||
+           status.toLowerCase() == 'resolved';
+  }
+
+  // Getter for summary (alias for title)
+  String get summary => title;
+
+  // Getter for created (alias for createdAt)
+  DateTime? get created => createdAt;
+
+  Task copyWith({
+    String? title,
+    String? description,
+    bool? isCompleted,
+    String? jiraTicketId,
+    Priority? priorityEnum,
+    List<Task>? subtasks,
+    String? parentKey,
+    bool? isSubtask,
+    String? status,
+    String? assignee,
+    String? priority,
+    DateTime? updated,
+    String? sprintName,
+    bool? isInActiveSprint,
+    String? projectId,
+  }) {
+    return Task(
+      id: id,
+      key: key,
+      title: title ?? this.title,
+      description: description ?? this.description,
+      status: status ?? (isCompleted != null ? (isCompleted ? 'Done' : 'To Do') : this.status),
+      assignee: assignee ?? this.assignee,
+      priority: priority ?? this.priority,
+      createdAt: createdAt,
+      updated: updated ?? this.updated,
+      sprintName: sprintName ?? this.sprintName,
+      isInActiveSprint: isInActiveSprint ?? this.isInActiveSprint,
+      subtasks: subtasks ?? this.subtasks,
+      parentKey: parentKey ?? this.parentKey,
+      isSubtask: isSubtask ?? this.isSubtask,
+      projectId: projectId ?? this.projectId,
+      jiraTicketId: jiraTicketId ?? this.jiraTicketId,
+      priorityEnum: priorityEnum ?? this.priorityEnum,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    String priorityString;
+    switch (priorityEnum) {
+      case Priority.low:
+        priorityString = 'low';
+        break;
+      case Priority.medium:
+        priorityString = 'medium';
+        break;
+      case Priority.high:
+        priorityString = 'high';
+        break;
+      case Priority.critical:
+        priorityString = 'critical';
+        break;
+    }
+    
+    return {
+      'id': id,
+      'key': key,
+      'title': title,
+      'description': description,
+      'status': status,
+      'assignee': assignee,
+      'priority': priority,
+      'createdAt': createdAt?.millisecondsSinceEpoch,
+      'updated': updated?.millisecondsSinceEpoch,
+      'sprintName': sprintName,
+      'isInActiveSprint': isInActiveSprint,
+      'subtasks': subtasks.map((subtask) => subtask.toJson()).toList(),
+      'parentKey': parentKey,
+      'isSubtask': isSubtask,
+      'projectId': projectId,
+      'jiraTicketId': jiraTicketId,
+      'priorityEnum': priorityString,
+    };
+  }
+
+  factory Task.fromJson(Map<String, dynamic> json) {
+    final priorityString = json['priorityEnum'] as String? ?? json['priority'] as String?;
+    Priority priorityEnum = Priority.medium;
+    
+    switch (priorityString?.toLowerCase()) {
+      case 'low':
+      case 'lowest':
+        priorityEnum = Priority.low;
+        break;
+      case 'medium':
+        priorityEnum = Priority.medium;
+        break;
+      case 'high':
+        priorityEnum = Priority.high;
+        break;
+      case 'critical':
+      case 'highest':
+        priorityEnum = Priority.critical;
+        break;
+    }
+
+    return Task(
+      id: json['id'] as String,
+      key: json['key'] as String? ?? json['id'] as String,
+      title: json['title'] as String,
+      description: json['description'] as String?,
+      status: json['status'] as String? ?? (json['isCompleted'] == true ? 'Done' : 'To Do'),
+      assignee: json['assignee'] as String?,
+      priority: json['priority'] as String?,
+      createdAt: json['createdAt'] != null ? DateTime.fromMillisecondsSinceEpoch(json['createdAt'] as int) : null,
+      updated: json['updated'] != null ? DateTime.fromMillisecondsSinceEpoch(json['updated'] as int) : null,
+      sprintName: json['sprintName'] as String?,
+      isInActiveSprint: json['isInActiveSprint'] as bool? ?? false,
+      subtasks: (json['subtasks'] as List<dynamic>?)
+          ?.map((subtaskJson) => Task.fromJson(subtaskJson))
+          .toList() ?? [],
+      parentKey: json['parentKey'] as String?,
+      isSubtask: json['isSubtask'] as bool? ?? false,
+      projectId: json['projectId'] as String,
+      jiraTicketId: json['jiraTicketId'] as String?,
+      priorityEnum: priorityEnum,
+    );
+  }
 
   // Helper function to extract text from Jira's Atlassian Document Format (ADF)
   static String? _extractTextFromADF(dynamic descriptionField) {
@@ -96,7 +237,7 @@ class JiraIssue {
     return textParts.isNotEmpty ? textParts.join(' ') : null;
   }
 
-  factory JiraIssue.fromJiraIssue(IssueBean issue) {
+  factory Task.fromJiraIssue(IssueBean issue, String projectId) {
     // Extract sprint information
     String? sprintName;
     bool isInActiveSprint = false;
@@ -118,7 +259,7 @@ class JiraIssue {
     }
     
     // Extract subtasks information
-    List<JiraIssue> subtasksList = [];
+    List<Task> subtasksList = [];
     if (issue.fields?['subtasks'] != null && issue.fields!['subtasks'] is List) {
       for (var subtaskData in issue.fields!['subtasks']) {
         if (subtaskData is Map<String, dynamic>) {
@@ -137,31 +278,59 @@ class JiraIssue {
               'parent': {'key': issue.key},
             },
           );
-          subtasksList.add(JiraIssue.fromJiraIssue(subtaskIssue));
+          subtasksList.add(Task.fromJiraIssue(subtaskIssue, projectId));
         }
       }
     }
     
     // Check if this is a subtask
     final issueType = issue.fields?['issuetype']?['name']?.toString();
-    final isSubtask = issueType?.toLowerCase() == 'sub-task' || issueType?.toLowerCase() == 'subtask';
     final parentKey = issue.fields?['parent']?['key']?.toString();
     
-    return JiraIssue(
+    // Precise subtask detection - only based on issue type, not parent relationship
+    // In Jira, tasks can have parents (like being under an Epic) without being subtasks
+    final isSubtask = issueType?.toLowerCase() == 'subtask';
+    
+    // Convert Jira priority to our Priority enum
+    Priority priorityEnum;
+    final jiraPriority = issue.fields?['priority']?['name']?.toString();
+    switch (jiraPriority?.toLowerCase()) {
+      case 'highest':
+      case 'critical':
+        priorityEnum = Priority.critical;
+        break;
+      case 'high':
+        priorityEnum = Priority.high;
+        break;
+      case 'medium':
+        priorityEnum = Priority.medium;
+        break;
+      case 'lowest':
+      case 'low':
+        priorityEnum = Priority.low;
+        break;
+      default:
+        priorityEnum = Priority.medium;
+    }
+    
+    return Task(
       id: issue.id ?? '',
       key: issue.key ?? '',
-      summary: issue.fields?['summary']?.toString() ?? 'No summary',
+      title: issue.fields?['summary']?.toString() ?? 'No summary',
       description: _extractTextFromADF(issue.fields?['description']),
       status: issue.fields?['status']?['name']?.toString() ?? 'Unknown',
       assignee: issue.fields?['assignee']?['displayName']?.toString(),
       priority: issue.fields?['priority']?['name']?.toString(),
-      created: issue.fields?['created'] != null ? DateTime.tryParse(issue.fields!['created'].toString()) : null,
+      createdAt: issue.fields?['created'] != null ? DateTime.tryParse(issue.fields!['created'].toString()) : null,
       updated: issue.fields?['updated'] != null ? DateTime.tryParse(issue.fields!['updated'].toString()) : null,
       sprintName: sprintName,
       isInActiveSprint: isInActiveSprint,
       subtasks: subtasksList,
       parentKey: parentKey,
       isSubtask: isSubtask,
+      projectId: projectId,
+      jiraTicketId: issue.key,
+      priorityEnum: priorityEnum,
     );
   }
 }
@@ -255,7 +424,7 @@ class JiraService {
     }
   }
 
-  Future<List<JiraIssue>> fetchProjectIssues(String baseUrl, String projectKey) async {
+  Future<List<Task>> fetchProjectIssues(String baseUrl, String projectKey) async {
     try {
       await _initializeIfNeeded(baseUrl);
       
@@ -275,7 +444,7 @@ class JiraService {
       if (searchResult.issues != null) {
         print('Found ${searchResult.issues!.length} issues');
         return searchResult.issues!
-            .map((issue) => JiraIssue.fromJiraIssue(issue))
+            .map((issue) => Task.fromJiraIssue(issue, projectKey))
             .toList();
       } else {
         print('No issues found in response');
@@ -308,7 +477,7 @@ class JiraService {
     }
   }
 
-  Future<JiraIssue> createIssue({
+  Future<Task> createIssue({
     required String baseUrl,
     required String projectKey,
     required String summary,
@@ -368,7 +537,7 @@ class JiraService {
         fields: ['summary', 'description', 'status', 'assignee', 'priority', 'created', 'updated'],
       );
 
-      return JiraIssue.fromJiraIssue(issueBean);
+      return Task.fromJiraIssue(issueBean, projectKey);
     } catch (e) {
       String errorMessage = 'Error creating Jira issue: $e';
       print(errorMessage);
@@ -478,7 +647,7 @@ class JiraService {
     }
   }
 
-  Future<JiraIssue> createSubtask({
+  Future<Task> createSubtask({
     required String baseUrl,
     required String projectKey,
     required String parentIssueKey,
@@ -525,7 +694,7 @@ class JiraService {
         fields: ['summary', 'status', 'assignee', 'priority', 'created', 'updated', 'parent', 'issuetype'],
       );
 
-      return JiraIssue.fromJiraIssue(issueBean);
+      return Task.fromJiraIssue(issueBean, projectKey);
     } catch (e) {
       String errorMessage = 'Error creating Jira subtask: $e';
       print(errorMessage);
@@ -615,6 +784,61 @@ class JiraService {
       print('Successfully deleted issue: $issueKey');
     } catch (e) {
       String errorMessage = 'Error deleting Jira issue: $e';
+      print(errorMessage);
+      rethrow;
+    }
+  }
+
+  Future<String?> getCurrentUserEmail() async {
+    return _email;
+  }
+
+  Future<String?> getCurrentUserDisplayName() async {
+    try {
+      if (_jiraApi == null) {
+        return null;
+      }
+      
+      final user = await _jiraApi!.myself.getCurrentUser();
+      return user.displayName;
+    } catch (e) {
+      print('Error getting current user: $e');
+      return null;
+    }
+  }
+
+  Future<List<Task>> fetchMyAssignedIssues(String baseUrl, String projectKey) async {
+    try {
+      await _initializeIfNeeded(baseUrl);
+      
+      if (_jiraApi == null) {
+        throw Exception('Failed to initialize Jira API');
+      }
+
+      print('Fetching assigned issues for current user in project: $projectKey');
+
+      // Get current user info
+      final user = await _jiraApi!.myself.getCurrentUser();
+      final userAccountId = user.accountId;
+
+      // Use JQL to search for issues assigned to current user in the project
+      final searchResult = await _jiraApi!.issueSearch.searchForIssuesUsingJql(
+        jql: 'project = $projectKey AND assignee = $userAccountId ORDER BY priority DESC, created DESC',
+        maxResults: 50,
+        fields: ['summary', 'description', 'status', 'assignee', 'priority', 'created', 'updated', 'sprint', 'customfield_10020', 'subtasks', 'parent', 'issuetype'],
+      );
+
+      if (searchResult.issues != null) {
+        print('Found ${searchResult.issues!.length} assigned issues');
+        return searchResult.issues!
+            .map((issue) => Task.fromJiraIssue(issue, projectKey))
+            .toList();
+      } else {
+        print('No assigned issues found in response');
+        return [];
+      }
+    } catch (e) {
+      String errorMessage = 'Error fetching assigned Jira issues: $e';
       print(errorMessage);
       rethrow;
     }
