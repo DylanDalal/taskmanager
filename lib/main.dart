@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math; 
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:percent_indicator/percent_indicator.dart';
@@ -62,7 +63,7 @@ class Project {
       type: type ?? this.type,
       color: type != null 
         ? (type == ProjectType.development 
-            ? Colors.purple[600]! 
+            ? Colors.grey[600]! 
             : type == ProjectType.youtube 
               ? Colors.red[600]! 
               : Colors.orange[600]!)
@@ -136,15 +137,11 @@ class Project {
   int get completedTasks => tasks.where((task) => task.isCompleted && !task.isSubtask).length;
   
   // Calculate progress based on Jira issues if available, otherwise local tasks
-  double getProgressPercentage(List<JiraIssue> jiraIssues) {
+  double getProgressPercentage(List<Task> jiraIssues) {
     if (jiraIssues.isNotEmpty) {
       // Exclude subtasks from progress calculation
       final mainIssues = jiraIssues.where((issue) => !issue.isSubtask).toList();
-      final doneIssues = mainIssues.where((issue) => 
-        issue.status.toLowerCase() == 'done' || 
-        issue.status.toLowerCase() == 'closed' ||
-        issue.status.toLowerCase() == 'resolved'
-      ).length;
+      final doneIssues = mainIssues.where((issue) => issue.isCompleted).length;
       return mainIssues.isEmpty ? 0.0 : (doneIssues / mainIssues.length) * 100;
     } else {
       return tasks.isEmpty ? 0.0 : (completedTasks / tasks.length) * 100;
@@ -152,41 +149,33 @@ class Project {
   }
   
   // Calculate sprint progress based on current sprint issues
-  double getSprintProgressPercentage(List<JiraIssue> jiraIssues) {
+  double getSprintProgressPercentage(List<Task> jiraIssues) {
     if (jiraIssues.isEmpty) return 0.0;
     
     // Exclude subtasks from sprint progress calculation
     final sprintIssues = jiraIssues.where((issue) => issue.isInActiveSprint && !issue.isSubtask).toList();
     if (sprintIssues.isEmpty) return 0.0;
     
-    final doneSprintIssues = sprintIssues.where((issue) => 
-      issue.status.toLowerCase() == 'done' || 
-      issue.status.toLowerCase() == 'closed' ||
-      issue.status.toLowerCase() == 'resolved'
-    ).length;
+    final doneSprintIssues = sprintIssues.where((issue) => issue.isCompleted).length;
     
     return (doneSprintIssues / sprintIssues.length) * 100;
   }
   
   // Get current sprint name
-  String? getCurrentSprintName(List<JiraIssue> jiraIssues) {
+  String? getCurrentSprintName(List<Task> jiraIssues) {
     final sprintIssues = jiraIssues.where((issue) => issue.isInActiveSprint && !issue.isSubtask).toList();
     return sprintIssues.isNotEmpty ? sprintIssues.first.sprintName : null;
   }
   
   // Get count of sprint issues (excluding subtasks)
-  int getSprintIssueCount(List<JiraIssue> jiraIssues) {
+  int getSprintIssueCount(List<Task> jiraIssues) {
     return jiraIssues.where((issue) => issue.isInActiveSprint && !issue.isSubtask).length;
   }
   
   // Get count of completed sprint issues (excluding subtasks)
-  int getCompletedSprintIssueCount(List<JiraIssue> jiraIssues) {
+  int getCompletedSprintIssueCount(List<Task> jiraIssues) {
     return jiraIssues.where((issue) => 
-      issue.isInActiveSprint && !issue.isSubtask && (
-        issue.status.toLowerCase() == 'done' || 
-        issue.status.toLowerCase() == 'closed' ||
-        issue.status.toLowerCase() == 'resolved'
-      )
+      issue.isInActiveSprint && !issue.isSubtask && issue.isCompleted
     ).length;
   }
   
@@ -239,7 +228,7 @@ class Project {
       projectSummary: json['projectSummary'] as String?,
       techStack: json['techStack'] as String?,
       type: type,
-      color: type == ProjectType.development ? Colors.purple[600]! : Colors.orange[600]!,
+              color: type == ProjectType.development ? Colors.grey[600]! : Colors.orange[600]!,
       icon: type == ProjectType.development ? Icons.code : Icons.task,
       tasks: (json['tasks'] as List<dynamic>?)
           ?.map((taskJson) => Task.fromJson(taskJson))
@@ -499,7 +488,7 @@ class DevelopmentProject extends Project {
       description: description ?? this.description,
       projectSummary: projectSummary ?? this.projectSummary,
       techStack: techStack ?? this.techStack,
-      color: Colors.purple[600]!,
+      color: Colors.grey[600]!,
       icon: Icons.code,
       tasks: tasks ?? this.tasks,
       jiraProjectUrl: jiraProjectUrl ?? this.jiraProjectUrl,
@@ -529,7 +518,7 @@ class DevelopmentProject extends Project {
       description: json['description'] as String,
       projectSummary: json['projectSummary'] as String?,
       techStack: json['techStack'] as String?,
-      color: Colors.purple[600]!,
+      color: Colors.grey[600]!,
       icon: Icons.code,
       tasks: (json['tasks'] as List<dynamic>?)
           ?.map((taskJson) => Task.fromJson(taskJson))
@@ -573,128 +562,66 @@ class DevelopmentProject extends Project {
   }
 }
 
-class Task {
-  final String id;
-  final String title;
-  final String description;
-  final String projectId;
-  final DateTime createdAt;
-  final bool isCompleted;
-  final String? jiraTicketId;
-  final Priority priority;
-  final List<Task> subtasks;
-  final String? parentTaskId;
-  final bool isSubtask;
+// Task class and Priority enum are now defined in services/jira_service.dart
 
-  Task({
+// Model for scheduled tasks/subtasks
+class ScheduledTask {
+  final String id;
+  final Task task;
+  final String projectId;
+  final String projectName;
+  final Color projectColor;
+  final DateTime scheduledAt;
+  final DateTime? dueDate;
+
+  ScheduledTask({
     required this.id,
-    required this.title,
-    required this.description,
+    required this.task,
     required this.projectId,
-    required this.createdAt,
-    this.isCompleted = false,
-    this.jiraTicketId,
-    this.priority = Priority.medium,
-    this.subtasks = const [],
-    this.parentTaskId,
-    this.isSubtask = false,
+    required this.projectName,
+    required this.projectColor,
+    required this.scheduledAt,
+    this.dueDate,
   });
 
-  Task copyWith({
-    String? title,
-    String? description,
-    bool? isCompleted,
-    String? jiraTicketId,
-    Priority? priority,
-    List<Task>? subtasks,
-    String? parentTaskId,
-    bool? isSubtask,
+  ScheduledTask copyWith({
+    DateTime? dueDate,
   }) {
-    return Task(
+    return ScheduledTask(
       id: id,
-      title: title ?? this.title,
-      description: description ?? this.description,
+      task: task,
       projectId: projectId,
-      createdAt: createdAt,
-      isCompleted: isCompleted ?? this.isCompleted,
-      jiraTicketId: jiraTicketId ?? this.jiraTicketId,
-      priority: priority ?? this.priority,
-      subtasks: subtasks ?? this.subtasks,
-      parentTaskId: parentTaskId ?? this.parentTaskId,
-      isSubtask: isSubtask ?? this.isSubtask,
+      projectName: projectName,
+      projectColor: projectColor,
+      scheduledAt: scheduledAt,
+      dueDate: dueDate ?? this.dueDate,
     );
   }
 
   Map<String, dynamic> toJson() {
-    String priorityString;
-    switch (priority) {
-      case Priority.low:
-        priorityString = 'low';
-        break;
-      case Priority.medium:
-        priorityString = 'medium';
-        break;
-      case Priority.high:
-        priorityString = 'high';
-        break;
-      case Priority.critical:
-        priorityString = 'critical';
-        break;
-    }
-    
     return {
       'id': id,
-      'title': title,
-      'description': description,
+      'task': task.toJson(),
       'projectId': projectId,
-      'createdAt': createdAt.millisecondsSinceEpoch,
-      'isCompleted': isCompleted,
-      'jiraTicketId': jiraTicketId,
-      'priority': priorityString,
-      'subtasks': subtasks.map((subtask) => subtask.toJson()).toList(),
-      'parentTaskId': parentTaskId,
-      'isSubtask': isSubtask,
+      'projectName': projectName,
+      'projectColor': projectColor.value,
+      'scheduledAt': scheduledAt.millisecondsSinceEpoch,
+      'dueDate': dueDate?.millisecondsSinceEpoch,
     };
   }
 
-  factory Task.fromJson(Map<String, dynamic> json) {
-    final priorityString = json['priority'] as String?;
-    Priority priority = Priority.medium;
-    
-    switch (priorityString) {
-      case 'low':
-        priority = Priority.low;
-        break;
-      case 'medium':
-        priority = Priority.medium;
-        break;
-      case 'high':
-        priority = Priority.high;
-        break;
-      case 'critical':
-        priority = Priority.critical;
-        break;
-    }
-
-    return Task(
+  factory ScheduledTask.fromJson(Map<String, dynamic> json) {
+    return ScheduledTask(
       id: json['id'] as String,
-      title: json['title'] as String,
-      description: json['description'] as String,
+      task: Task.fromJson(json['task'] as Map<String, dynamic>),
       projectId: json['projectId'] as String,
-      createdAt: DateTime.fromMillisecondsSinceEpoch(json['createdAt'] as int),
-      isCompleted: json['isCompleted'] as bool? ?? false,
-      jiraTicketId: json['jiraTicketId'] as String?,
-      priority: priority,
-      subtasks: (json['subtasks'] as List<dynamic>?)
-          ?.map((subtaskJson) => Task.fromJson(subtaskJson))
-          .toList() ?? [],
-      parentTaskId: json['parentTaskId'] as String?,
-      isSubtask: json['isSubtask'] as bool? ?? false,
+      projectName: json['projectName'] as String,
+      projectColor: Color(json['projectColor'] as int),
+      scheduledAt: DateTime.fromMillisecondsSinceEpoch(json['scheduledAt'] as int),
+      dueDate: json['dueDate'] != null ? DateTime.fromMillisecondsSinceEpoch(json['dueDate'] as int) : null,
     );
   }
 }
-
-enum Priority { low, medium, high, critical }
 
 class AppSettings {
   final String? chatGptToken;
@@ -773,7 +700,9 @@ class _DashboardPageState extends State<DashboardPage> with SingleTickerProvider
   AppSettings _settings = AppSettings();
   List<Project> _professionalProjects = [];
   List<Project> _personalProjects = [];
-  Map<String, List<JiraIssue>> _projectJiraIssues = {}; // Store Jira issues by project ID
+  Map<String, List<Task>> _projectJiraIssues = {}; // Store Jira issues by project ID
+  List<ScheduledTask> _scheduledTasks = []; // Store scheduled tasks
+  List<Function()> _scheduleUpdateCallbacks = []; // Callbacks to notify schedule updates
 
   @override
   void initState() {
@@ -789,9 +718,12 @@ class _DashboardPageState extends State<DashboardPage> with SingleTickerProvider
     super.dispose();
   }
 
-  void _initializeProjects() {
+  void _initializeProjects() async {
     // Load projects from storage
-    _loadProjects();
+    await _loadProjects();
+    await _loadScheduledTasks();
+    // Automatically fetch and schedule assigned Jira issues
+    _fetchAndScheduleAssignedIssues();
   }
 
   Future<void> _loadProjects() async {
@@ -883,6 +815,214 @@ class _DashboardPageState extends State<DashboardPage> with SingleTickerProvider
     } catch (e) {
       print('Error saving settings: $e');
     }
+  }
+
+  Future<void> _loadScheduledTasks() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final file = File('${directory.path}/taskmanager_scheduled_tasks.json');
+      if (await file.exists()) {
+        final contents = await file.readAsString();
+        final json = jsonDecode(contents) as List<dynamic>;
+        
+        setState(() {
+          _scheduledTasks = json
+              .map((taskJson) => ScheduledTask.fromJson(taskJson))
+              .toList();
+        });
+        
+        print('Loaded ${_scheduledTasks.length} scheduled tasks');
+      }
+    } catch (e) {
+      print('Error loading scheduled tasks: $e');
+    }
+  }
+
+  Future<void> _saveScheduledTasks() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final file = File('${directory.path}/taskmanager_scheduled_tasks.json');
+      
+      final json = _scheduledTasks.map((task) => task.toJson()).toList();
+      
+      await file.writeAsString(jsonEncode(json));
+    } catch (e) {
+      print('Error saving scheduled tasks: $e');
+    }
+  }
+
+  void _addTaskToSchedule(Task task, Project project) {
+    // Check if task is already scheduled (prevent duplicates)
+    final existingTask = _scheduledTasks.any((st) => 
+      st.task.id == task.id || 
+      (task.jiraTicketId != null && st.task.jiraTicketId == task.jiraTicketId)
+    );
+    
+    if (existingTask) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('"${task.title}" is already in the schedule'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    
+    final scheduledTask = ScheduledTask(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      task: task,
+      projectId: project.id,
+      projectName: project.name,
+      projectColor: project.color,
+      scheduledAt: DateTime.now(),
+    );
+    
+    setState(() {
+      _scheduledTasks.add(scheduledTask);
+      // Sort by priority: Critical > High > Medium > Low
+      _scheduledTasks.sort((a, b) => _comparePriority(a.task.priorityEnum, b.task.priorityEnum));
+    });
+    
+    _saveScheduledTasks();
+    
+    // Notify any open ProjectDetailPage to refresh its schedule
+    _notifyScheduleUpdate();
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Added "${task.title}" to schedule'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  void _removeTaskFromSchedule(ScheduledTask scheduledTask) {
+    setState(() {
+      _scheduledTasks.removeWhere((task) => task.id == scheduledTask.id);
+    });
+    
+    _saveScheduledTasks();
+    
+    // Notify any open ProjectDetailPage to refresh its schedule
+    _notifyScheduleUpdate();
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Removed "${scheduledTask.task.title}" from schedule'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+  }
+
+  Future<void> _fetchAndScheduleAssignedIssues() async {
+    print('Fetching assigned Jira issues from all projects...');
+    
+    // Get all Jira-enabled projects
+    final allProjects = [..._professionalProjects, ..._personalProjects];
+    final jiraProjects = allProjects.where((project) => 
+      project.jiraBaseUrl != null && project.extractedJiraProjectKey != null
+    ).toList();
+    
+    if (jiraProjects.isEmpty) {
+      print('No Jira projects found');
+      return;
+    }
+    
+    final jiraService = JiraService.instance;
+    List<ScheduledTask> newScheduledTasks = [];
+    
+    // Fetch assigned issues from each Jira project
+    for (final project in jiraProjects) {
+      try {
+        print('Fetching assigned issues for project: ${project.name}');
+        final assignedIssues = await jiraService.fetchMyAssignedIssues(
+          project.jiraBaseUrl!,
+          project.extractedJiraProjectKey!,
+        );
+        
+        print('Found ${assignedIssues.length} assigned issues in ${project.name}');
+        
+        // Convert Jira issues to scheduled tasks
+        for (final issue in assignedIssues) {
+          // Skip if already in schedule
+          final existingTask = _scheduledTasks.any((st) => st.task.jiraTicketId == issue.key);
+          if (existingTask) {
+            continue;
+          }
+          
+          // Convert Jira issue to Task
+          final task = _convertJiraIssueToTaskForSchedule(issue, project.id);
+          
+          final scheduledTask = ScheduledTask(
+            id: 'auto_${issue.key}_${DateTime.now().millisecondsSinceEpoch}',
+            task: task,
+            projectId: project.id,
+            projectName: project.name,
+            projectColor: project.color,
+            scheduledAt: DateTime.now(),
+          );
+          
+          newScheduledTasks.add(scheduledTask);
+        }
+      } catch (e) {
+        print('Error fetching assigned issues for ${project.name}: $e');
+        // Continue with other projects
+      }
+    }
+    
+    if (newScheduledTasks.isNotEmpty) {
+      setState(() {
+        _scheduledTasks.addAll(newScheduledTasks);
+        // Sort by priority: Critical > High > Medium > Low
+        _scheduledTasks.sort((a, b) => _comparePriority(a.task.priorityEnum, b.task.priorityEnum));
+      });
+      
+      _saveScheduledTasks();
+      
+      // Notify any open ProjectDetailPage to refresh its schedule
+      _notifyScheduleUpdate();
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Added ${newScheduledTasks.length} assigned Jira tasks to schedule'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      
+      print('Added ${newScheduledTasks.length} assigned tasks to schedule');
+    } else {
+      print('No new assigned issues found or all already scheduled');
+    }
+  }
+
+  int _comparePriority(Priority a, Priority b) {
+    const priorityOrder = {
+      Priority.critical: 4,
+      Priority.high: 3,
+      Priority.medium: 2,
+      Priority.low: 1,
+    };
+    
+    return (priorityOrder[b] ?? 0) - (priorityOrder[a] ?? 0);
+  }
+
+  Task _convertJiraIssueToTaskForSchedule(Task issue, String projectId) {
+    return issue.copyWith(projectId: projectId);
+  }
+
+  void _notifyScheduleUpdate() {
+    // Notify all registered callbacks about schedule updates
+    for (final callback in _scheduleUpdateCallbacks) {
+      callback();
+    }
+  }
+
+  void _registerScheduleUpdateCallback(Function() callback) {
+    _scheduleUpdateCallbacks.add(callback);
+  }
+
+  void _unregisterScheduleUpdateCallback(Function() callback) {
+    _scheduleUpdateCallbacks.remove(callback);
   }
 
   void _showCreateProjectDialog(bool isProfessional) {
@@ -1099,6 +1239,14 @@ class _DashboardPageState extends State<DashboardPage> with SingleTickerProvider
             });
             _saveProjects();
           },
+          onAddToSchedule: _addTaskToSchedule,
+          professionalProjects: _professionalProjects,
+          personalProjects: _personalProjects,
+          scheduledTasks: _scheduledTasks,
+          onRemoveTask: _removeTaskFromSchedule,
+          onOpenTaskDetail: _openScheduledTaskDetail,
+          onRegisterScheduleUpdate: _registerScheduleUpdateCallback,
+          onUnregisterScheduleUpdate: _unregisterScheduleUpdateCallback,
         ),
       ),
     );
@@ -1111,86 +1259,67 @@ class _DashboardPageState extends State<DashboardPage> with SingleTickerProvider
       body: SafeArea(
         child: Column(
           children: [
-            // Dashboard Title and Tabs
-            Container(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
+            // Dashboard Title (unrestricted)
+            Padding(
+              padding: const EdgeInsets.only(top: 20.0, left: 20.0, right: 20.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // Dashboard Title with Settings
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const SizedBox(width: 40),
-                      Text(
-                        'DASHBOARD',
-                        style: const TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                          letterSpacing: 2.0,
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: _showSettingsDialog,
-                        icon: Icon(Icons.settings, color: Colors.grey[300]),
-                      ),
-                    ],
+                  const SizedBox(width: 40),
+                  Text(
+                    'DASHBOARD',
+                    style: const TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      letterSpacing: 2.0,
+                    ),
                   ),
-                  
-                  const SizedBox(height: 20),
-                  
-                  // Tab Bar
-                  Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF2A2A2A),
-                      borderRadius: BorderRadius.circular(25),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
-                          spreadRadius: 1,
-                          blurRadius: 5,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: TabBar(
-                      controller: _tabController,
-                      indicator: BoxDecoration(
-                        borderRadius: BorderRadius.circular(25),
-                        color: Colors.blue[600],
-                      ),
-                      indicatorSize: TabBarIndicatorSize.tab,
-                      dividerColor: Colors.transparent,
-                      labelColor: Colors.white,
-                      unselectedLabelColor: Colors.grey[300],
-                      labelStyle: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                      tabs: const [
-                        Tab(
-                          text: 'Professional',
-                          icon: Icon(Icons.work, size: 20),
-                        ),
-                        Tab(
-                          text: 'Personal',
-                          icon: Icon(Icons.home, size: 20),
-                        ),
-                      ],
-                    ),
+                  IconButton(
+                    onPressed: _showSettingsDialog,
+                    icon: Icon(Icons.settings, color: Colors.grey[300]),
                   ),
                 ],
               ),
             ),
             
-            // Tab Content
+            const SizedBox(height: 20),
+            
+            // Three-column layout
             Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildTabContent('Professional', _professionalProjects),
-                  _buildTabContent('Personal', _personalProjects),
-                ],
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                child: Row(
+                  children: [
+                    // Left Panel - Schedule (20%)
+                    Expanded(
+                      flex: 20,
+                      child: Hero(
+                        tag: 'schedule_panel',
+                        child: Material(
+                          color: Colors.transparent,
+                          child: _buildSchedulePanel(),
+                        ),
+                      ),
+                    ),
+                    
+                    const SizedBox(width: 20),
+                    
+                    // Center Panel - Dashboard (60%)
+                    Expanded(
+                      flex: 60,
+                      child: _buildDashboardPanel(),
+                    ),
+                    
+                    const SizedBox(width: 20),
+                    
+                    // Right Panel - Updates (20%)
+                    Expanded(
+                      flex: 20,
+                      child: _buildUpdatesPanel(),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -1200,93 +1329,77 @@ class _DashboardPageState extends State<DashboardPage> with SingleTickerProvider
   }
 
   Widget _buildTabContent(String title, List<Project> projects) {
-    return Container(
-      margin: const EdgeInsets.all(20.0),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E1E),
-        borderRadius: BorderRadius.circular(15),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.3),
-            spreadRadius: 2,
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Section Header
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.blue[600]!.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(
-                        title == 'Professional' ? Icons.work : Icons.home,
-                        color: Colors.blue[600],
-                        size: 24,
-                      ),
-                    ),
-                    const SizedBox(width: 15),
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-                ElevatedButton.icon(
-                  onPressed: () => _showCreateProjectDialog(title == 'Professional'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue[600],
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  icon: const Icon(Icons.add, color: Colors.white),
-                  label: const Text(
-                    'Add Project',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                ),
-              ],
+    return Column(
+      children: [
+        // Header Section (simplified and shrunk)
+        Container(
+          height: 5,
+          decoration: BoxDecoration(
+            color: const Color(0xFFFAFAFA), // Header color matching cards
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(5),
+              topRight: Radius.circular(5),
             ),
-            
-            const SizedBox(height: 20),
-            
-            // Projects Grid
-            Expanded(
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.6),
+                spreadRadius: 2,
+                blurRadius: 12,
+                offset: const Offset(0, 100), // Shadow cast downward onto grid
+              ),
+            ],
+          ),
+        ),
+        
+        // Projects Grid Section
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E1E1E), // Grid color (darker than header)
+              borderRadius: const BorderRadius.only(
+                bottomLeft: Radius.circular(5),
+                bottomRight: Radius.circular(5),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
               child: projects.isEmpty
                   ? _buildEmptyState()
-                  : GridView.builder(
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 5,
-                        childAspectRatio: 0.8,
-                        crossAxisSpacing: 16.0,
-                        mainAxisSpacing: 16.0,
-                      ),
-                      itemCount: projects.length,
-                      itemBuilder: (context, index) {
-                        return _buildProjectCard(projects[index]);
+                  : LayoutBuilder(
+                      builder: (context, constraints) {
+                        // Responsive grid: min 200px, max 300px per card, preferred ~250px
+                        final minCardWidth = 200.0;
+                        final maxCardWidth = 300.0;
+                        final preferredCardWidth = 250.0;
+                        
+                        // Calculate cross axis count based on available width
+                        int crossAxisCount = (constraints.maxWidth / preferredCardWidth).floor();
+                        crossAxisCount = crossAxisCount.clamp(1, 6); // Min 1, max 6 columns
+                        
+                        // Calculate actual card width
+                        final actualCardWidth = (constraints.maxWidth - (crossAxisCount - 1) * 16.0) / crossAxisCount;
+                        
+                        // Clamp card width between min and max
+                        final clampedCardWidth = actualCardWidth.clamp(minCardWidth, maxCardWidth);
+                        
+                        return GridView.builder(
+                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: crossAxisCount,
+                            childAspectRatio: 0.8,
+                            crossAxisSpacing: 16.0,
+                            mainAxisSpacing: 16.0,
+                          ),
+                          itemCount: projects.length,
+                          itemBuilder: (context, index) {
+                            return _buildProjectCard(projects[index]);
+                          },
+                        );
                       },
                     ),
             ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 
@@ -1332,6 +1445,298 @@ class _DashboardPageState extends State<DashboardPage> with SingleTickerProvider
       onDelete: () => _deleteProject(project),
     );
   }
+
+  Widget _buildSchedulePanel() {
+    return SharedSchedulePanel(
+      onRefresh: _fetchAndScheduleAssignedIssues,
+      refreshTooltip: 'Refresh Assigned Tasks',
+      scheduledTasks: _scheduledTasks,
+      onRemoveTask: _removeTaskFromSchedule,
+      onOpenTaskDetail: _openScheduledTaskDetail,
+      showFullSchedule: true,
+    );
+  }
+
+  void _openScheduledTaskDetail(ScheduledTask scheduledTask) {
+    // Find the project for this task
+    final project = [..._professionalProjects, ..._personalProjects]
+        .firstWhere((p) => p.id == scheduledTask.projectId);
+    
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => TaskDetailPage(
+          task: scheduledTask.task,
+          project: project,
+          onTaskUpdated: (updatedTask) {
+            // Update the task in the project
+            setState(() {
+              final projectIndex = _professionalProjects.indexWhere((p) => p.id == project.id);
+              if (projectIndex != -1) {
+                final updatedTasks = _professionalProjects[projectIndex].tasks.map((t) {
+                  if (t.id == updatedTask.id) {
+                    return updatedTask;
+                  }
+                  return t;
+                }).toList();
+                _professionalProjects[projectIndex] = _professionalProjects[projectIndex].copyWith(tasks: updatedTasks);
+              } else {
+                final personalIndex = _personalProjects.indexWhere((p) => p.id == project.id);
+                if (personalIndex != -1) {
+                  final updatedTasks = _personalProjects[personalIndex].tasks.map((t) {
+                    if (t.id == updatedTask.id) {
+                      return updatedTask;
+                    }
+                    return t;
+                  }).toList();
+                  _personalProjects[personalIndex] = _personalProjects[personalIndex].copyWith(tasks: updatedTasks);
+                }
+              }
+              
+              // Update the scheduled task
+              final scheduledIndex = _scheduledTasks.indexWhere((st) => st.task.id == updatedTask.id);
+              if (scheduledIndex != -1) {
+                _scheduledTasks[scheduledIndex] = ScheduledTask(
+                  id: _scheduledTasks[scheduledIndex].id,
+                  task: updatedTask,
+                  projectId: _scheduledTasks[scheduledIndex].projectId,
+                  projectName: _scheduledTasks[scheduledIndex].projectName,
+                  projectColor: _scheduledTasks[scheduledIndex].projectColor,
+                  scheduledAt: _scheduledTasks[scheduledIndex].scheduledAt,
+                  dueDate: _scheduledTasks[scheduledIndex].dueDate,
+                );
+              }
+            });
+            _saveProjects();
+            _saveScheduledTasks();
+          },
+          onTaskDeleted: (deletedTask) {
+            // Remove from project and schedule
+            setState(() {
+              final projectIndex = _professionalProjects.indexWhere((p) => p.id == project.id);
+              if (projectIndex != -1) {
+                final updatedTasks = _professionalProjects[projectIndex].tasks.where((t) => t.id != deletedTask.id).toList();
+                _professionalProjects[projectIndex] = _professionalProjects[projectIndex].copyWith(tasks: updatedTasks);
+              } else {
+                final personalIndex = _personalProjects.indexWhere((p) => p.id == project.id);
+                if (personalIndex != -1) {
+                  final updatedTasks = _personalProjects[personalIndex].tasks.where((t) => t.id != deletedTask.id).toList();
+                  _personalProjects[personalIndex] = _personalProjects[personalIndex].copyWith(tasks: updatedTasks);
+                }
+              }
+              
+              // Remove from schedule
+              _scheduledTasks.removeWhere((st) => st.task.id == deletedTask.id);
+            });
+            _saveProjects();
+            _saveScheduledTasks();
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDashboardPanel() {
+    return Column(
+      children: [
+        // Tab Bar with inline Add Project button
+        Row(
+          children: [
+            // Tab Bar Container
+            Container(
+              width: MediaQuery.of(context).size.width * 0.25,
+              decoration: BoxDecoration(
+                color: const Color(0xFF2a2a2a),
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(5),
+                  topRight: Radius.circular(5),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.3),
+                    spreadRadius: 1,
+                    blurRadius: 5,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: TabBar(
+                controller: _tabController,
+                indicator: BoxDecoration(
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(5),
+                    topRight: Radius.circular(5),
+                  ),
+                  color: const Color(0xFFFAFAFA),
+                ),
+                indicatorSize: TabBarIndicatorSize.tab,
+                dividerColor: Colors.transparent,
+                labelColor: const Color(0xFF333333),
+                unselectedLabelColor: Colors.grey[300],
+                labelStyle: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+                tabs: const [
+                  Tab(text: 'Professional'),
+                  Tab(text: 'Personal'),
+                ],
+              ),
+            ),
+            // Spacer
+            const Spacer(),
+            // Add Project Button
+            ElevatedButton.icon(
+              onPressed: () => _showCreateProjectDialog(_tabController.index == 0),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue[600],
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              icon: const Icon(Icons.add, color: Colors.white),
+              label: const Text(
+                'Add Project',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+        
+        // Tab Content
+        Expanded(
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              _buildTabContent('Professional', _professionalProjects),
+              _buildTabContent('Personal', _personalProjects),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildUpdatesPanel() {
+    return Hero(
+      tag: 'right_panel_transform',
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E1E1E),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.white, width: 1),
+          ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'UPDATES',
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+                letterSpacing: 1.0,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    // Recent activity placeholder
+                    _buildUpdateItem(
+                      'Task Completed',
+                      'PP-123: Implement user authentication',
+                      '2 hours ago',
+                      Icons.check_circle,
+                      Colors.green,
+                    ),
+                    const SizedBox(height: 12),
+                    _buildUpdateItem(
+                      'Comment Added',
+                      'PP-456: Fix navigation bug',
+                      '4 hours ago',
+                      Icons.comment,
+                      Colors.blue,
+                    ),
+                    const SizedBox(height: 12),
+                    _buildUpdateItem(
+                      'Issue Created',
+                      'PP-789: Add dark mode support',
+                      '1 day ago',
+                      Icons.bug_report,
+                      Colors.orange,
+                    ),
+                    const SizedBox(height: 12),
+                    _buildUpdateItem(
+                      'Sprint Started',
+                      'Sprint 24: Mobile improvements',
+                      '2 days ago',
+                      Icons.play_arrow,
+                      Colors.purple,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUpdateItem(String title, String description, String time, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: 16),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            description,
+            style: const TextStyle(
+              fontSize: 11,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            time,
+            style: const TextStyle(
+              fontSize: 10,
+              color: Colors.white60,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class ProjectCard extends StatefulWidget {
@@ -1369,54 +1774,48 @@ class _ProjectCardState extends State<ProjectCard> {
       onExit: (_) => setState(() => _isHovered = false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        curve: Curves.easeInOut,
-        transform: _isHovered ? (Matrix4.identity()..scale(1.02)) : Matrix4.identity(),
+        alignment: Alignment.center,
+        transform: _isHovered
+            ? (Matrix4.identity()..translate(0.0, -5.0, 0.0))
+            : Matrix4.identity(),
         child: Card(
-          elevation: _isHovered ? 12 : 4,
+          clipBehavior: Clip.hardEdge,                     // chops stray px
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
+          elevation: _isHovered ? 12 : 4,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 200),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
-              color: _isHovered 
-                  ? const Color(0xFF2A2A2A) // Slightly brighter than default dark card
-                  : const Color(0xFF1E1E1E), // Default dark card color
-              boxShadow: _isHovered
-                  ? [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.3),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
-                      ),
-                    ]
-                  : [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 8,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
+              color: _isHovered
+                  ? const Color(0xFFc0c0c0)
+                  : const Color(0xFFFAFAFA),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(_isHovered ? 0.2 : 0.1),
+                  blurRadius: _isHovered ? 20 : 8,
+                  offset: Offset(0, _isHovered ? 8 : 4),
+                ),
+              ],
             ),
             child: InkWell(
               onTap: widget.onTap,
               borderRadius: BorderRadius.circular(16),
               child: Padding(
                 padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                // Stack lets us FLOAT the menu icon so it doesn't eat height
+                child: Stack(
                   children: [
-                    // Menu button at top right
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        PopupMenuButton(
-                          icon: Icon(
-                            Icons.more_vert, 
-                            color: Colors.grey[400], 
-                            size: 18
-                          ),
+                    // ── floating menu button ────────────────────────────────
+                    Positioned(
+                      top: 0,
+                      right: 0,
+                      child: AnimatedOpacity(
+                        duration: const Duration(milliseconds: 200),
+                        opacity: _isHovered ? 1.0 : 0.0,
+                        child: PopupMenuButton(
+                          icon: const Icon(Icons.more_vert, size: 18),
                           onSelected: (String value) {
                             if (value == 'edit') {
                               widget.onEdit();
@@ -1424,8 +1823,8 @@ class _ProjectCardState extends State<ProjectCard> {
                               widget.onDelete();
                             }
                           },
-                          itemBuilder: (BuildContext context) => [
-                            const PopupMenuItem(
+                          itemBuilder: (context) => const [
+                            PopupMenuItem(
                               value: 'edit',
                               child: Row(
                                 children: [
@@ -1435,104 +1834,106 @@ class _ProjectCardState extends State<ProjectCard> {
                                 ],
                               ),
                             ),
-                            const PopupMenuItem(
+                            PopupMenuItem(
                               value: 'delete',
                               child: Row(
                                 children: [
-                                  Icon(Icons.delete, size: 18, color: Colors.red),
+                                  Icon(Icons.delete,
+                                      size: 18, color: Colors.red),
                                   SizedBox(width: 8),
-                                  Text('Delete', style: TextStyle(color: Colors.red)),
+                                  Text('Delete',
+                                      style: TextStyle(color: Colors.red)),
                                 ],
                               ),
                             ),
                           ],
                         ),
-                      ],
+                      ),
                     ),
-                    
-                    // Circular Progress Indicators
-                    Expanded(
-                      child: Center(
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            // Outer circle - Project Progress
-                            CircularPercentIndicator(
-                              radius: 70.0,
-                              lineWidth: 8.0,
-                              percent: widget.projectProgress / 100,
-                              center: Stack(
-                                alignment: Alignment.center,
-                                children: [
-                                  // Inner circle - Sprint Progress
-                                  if (widget.hasSprintData)
+
+                    // ── main content ───────────────────────────────────────
+                    Align(
+                      alignment: const Alignment(0, -0.15), // shift UP only
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // progress rings
+                          LayoutBuilder(
+                            builder: (context, constraints) {
+                              // KEEP YOUR ORIGINAL SIZE MATH
+                              final maxRadius =
+                                  (constraints.maxWidth * 0.42)
+                                      .clamp(36.0, 96.0);
+                              final innerRadius = maxRadius * 0.88;
+                              final lineWidth =
+                                  (maxRadius * 0.15).clamp(6.0, 15.0);
+                              final fontSize =
+                                  (maxRadius * 0.25).clamp(12.0, 18.0);
+
+                              return SizedBox(
+                                width: maxRadius * 2 + lineWidth,
+                                height: maxRadius * 2 + lineWidth,
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    // outer (project) ring
                                     CircularPercentIndicator(
-                                      radius: 50.0,
-                                      lineWidth: 6.0,
-                                      percent: widget.sprintProgress / 100,
-                                      backgroundColor: Colors.grey[800]!,
-                                      progressColor: const Color(0xFF87CEEB), // Light blue
-                                      circularStrokeCap: CircularStrokeCap.round,
-                                    ),
-                                  // Sprint progress percentage in the center
-                                  if (widget.hasSprintData)
-                                    Text(
-                                      '${widget.sprintProgress.toInt()}%',
-                                      style: const TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.white,
+                                      radius: maxRadius,
+                                      lineWidth: lineWidth,
+                                      percent: widget.projectProgress / 100,
+                                      backgroundColor:
+                                          const Color(0xFF6c6c6c),
+                                      progressColor:
+                                          const Color(0xFF4286de), // green
+                                      center: Stack(
+                                        alignment: Alignment.center,
+                                        children: [
+                                          if (widget.hasSprintData)
+                                            CircularPercentIndicator(
+                                              radius: innerRadius,
+                                              lineWidth: lineWidth * 0.8,
+                                              percent:
+                                                  widget.sprintProgress / 100,
+                                              backgroundColor:
+                                                  const Color(0xFF6c6c6c),
+                                              progressColor:
+                                                  const Color(0xFF87CEEB), // blue
+                                            ),
+                                                                                     Text(
+                                             '${(widget.hasSprintData ? widget.sprintProgress : widget.projectProgress).toInt()}%',
+                                             style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                               color: const Color(0xFF333333),
+                                               shadows: [
+                                                 Shadow(
+                                                   offset: const Offset(0, 1),
+                                                   blurRadius: 2,
+                                                   color: Colors.black
+                                                       .withOpacity(0.3),
+                                                 ),
+                                               ],
+                                             ),
+                                          ),
+                                        ],
                                       ),
                                     ),
-                                  // If no sprint data, show project progress percentage
-                                  if (!widget.hasSprintData)
-                                    Text(
-                                      '${widget.projectProgress.toInt()}%',
-                                      style: const TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              backgroundColor: Colors.grey[800]!,
-                              progressColor: const Color(0xFF90EE90), // Light green
-                              circularStrokeCap: CircularStrokeCap.round,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    // Project Name
-                    Text(
-                      widget.project.name,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                      textAlign: TextAlign.center,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    
-                    const SizedBox(height: 8),
-                    
-                    // Project Icon
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: widget.project.color.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Icon(
-                        widget.project.icon,
-                        color: widget.project.color,
-                        size: 20,
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 8),
+                                                     // project name
+                           Text(
+                             widget.project.name,
+                             textAlign: TextAlign.center,
+                             style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                               color: const Color(0xFF333333),
+                             ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                        ],
                       ),
                     ),
                   ],
@@ -1645,7 +2046,7 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
         description: _descriptionController.text,
         projectSummary: _projectSummaryController.text.isEmpty ? null : _projectSummaryController.text,
         techStack: _techStackController.text.isEmpty ? null : _techStackController.text,
-        color: Colors.purple[600]!,
+        color: Colors.grey[600]!,
         icon: Icons.code,
         tasks: [],
         jiraProjectUrl: _jiraProjectUrlController.text.isEmpty ? null : _jiraProjectUrlController.text,
@@ -1696,7 +2097,7 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
                     value: ProjectType.development,
                     child: Row(
                       children: [
-                        Icon(Icons.code, color: Colors.purple, size: 20),
+                        Icon(Icons.code, color: Colors.grey, size: 20),
                         SizedBox(width: 8),
                         Text('Development'),
                       ],
@@ -1999,14 +2400,426 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
   }
 }
 
+// Shared Schedule Panel Widget
+class SharedSchedulePanel extends StatefulWidget {
+  final VoidCallback? onRefresh;
+  final String? refreshTooltip;
+  final bool showProjectSpecificMessage;
+  final String? projectName;
+  final List<ScheduledTask>? scheduledTasks;
+  final Function(ScheduledTask)? onRemoveTask;
+  final Function(ScheduledTask)? onOpenTaskDetail;
+  final bool showFullSchedule;
+
+  const SharedSchedulePanel({
+    Key? key,
+    this.onRefresh,
+    this.refreshTooltip,
+    this.showProjectSpecificMessage = false,
+    this.projectName,
+    this.scheduledTasks,
+    this.onRemoveTask,
+    this.onOpenTaskDetail,
+    this.showFullSchedule = false,
+  }) : super(key: key);
+
+  @override
+  State<SharedSchedulePanel> createState() => _SharedSchedulePanelState();
+}
+
+class _SharedSchedulePanelState extends State<SharedSchedulePanel> {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white, width: 1),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    'SCHEDULE',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                ),
+                if (widget.onRefresh != null)
+                  StatefulBuilder(
+                    builder: (context, setState) {
+                      bool isHovered = false;
+                      
+                      return MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        onEnter: (_) => setState(() => isHovered = true),
+                        onExit: (_) => setState(() => isHovered = false),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            color: isHovered ? Colors.blue[300]!.withOpacity(0.1) : Colors.transparent,
+                          ),
+                          child: IconButton(
+                            onPressed: widget.onRefresh,
+                            icon: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              transform: isHovered 
+                                ? (Matrix4.identity()..rotateZ(0.5))
+                                : Matrix4.identity(),
+                              child: Icon(
+                                Icons.refresh, 
+                                color: isHovered ? Colors.blue[400] : Colors.blue[300],
+                              ),
+                            ),
+                            tooltip: widget.refreshTooltip ?? 'Refresh Assigned Tasks',
+                            iconSize: 20,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    // Today's date
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.blue[600]!.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.blue[600]!.withOpacity(0.3)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Today',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue[300],
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            DateTime.now().toString().split(' ')[0],
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.white70,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    // Show scheduled tasks if available and showFullSchedule is true
+                    if (widget.showFullSchedule && widget.scheduledTasks != null)
+                      if (widget.scheduledTasks!.isEmpty)
+                        Container(
+                          padding: const EdgeInsets.all(20),
+                          child: Column(
+                            children: [
+                              Icon(
+                                Icons.schedule,
+                                size: 32,
+                                color: Colors.grey[600],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'No scheduled tasks',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[400],
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Add tasks from projects',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[500],
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else
+                        ...(widget.scheduledTasks!.map((scheduledTask) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _buildScheduledTaskCard(scheduledTask),
+                        )))
+                    else if (widget.showFullSchedule && widget.scheduledTasks == null)
+                      // Show loading or empty state when scheduledTasks is null
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.schedule,
+                              size: 32,
+                              color: Colors.grey[600],
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Loading schedule...',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[400],
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      // Show project-specific message for project detail page
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.schedule,
+                              size: 32,
+                              color: Colors.grey[600],
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              widget.showProjectSpecificMessage 
+                                ? 'Schedule shared across pages'
+                                : 'No scheduled tasks',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[400],
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              widget.showProjectSpecificMessage 
+                                ? 'Use refresh to add ${widget.projectName} tasks'
+                                : 'Add tasks from projects',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[500],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScheduledTaskCard(ScheduledTask scheduledTask) {
+    // Check if this is a subtask
+    final isSubtask = scheduledTask.task.isSubtask;
+    
+    return StatefulBuilder(
+      builder: (context, setState) {
+        bool isHovered = false;
+        
+        Widget cardWidget = MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => isHovered = true),
+          onExit: (_) => setState(() => isHovered = false),
+          child: GestureDetector(
+            onTap: () => widget.onOpenTaskDetail?.call(scheduledTask),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: isHovered ? const Color(0xFFFFFFFF) : const Color(0xFFFAFAFA),
+                borderRadius: BorderRadius.circular(8),
+                border: isHovered 
+                  ? Border.all(color: scheduledTask.projectColor.withOpacity(0.5), width: 1)
+                  : null,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(isHovered ? 0.15 : 0.1),
+                    blurRadius: isHovered ? 8 : 4,
+                    offset: Offset(0, isHovered ? 4 : 2),
+                  ),
+                ],
+              ),
+              transform: isHovered 
+                ? (Matrix4.identity()..scale(1.02))
+                : Matrix4.identity(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Task title and remove button
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          scheduledTask.task.title,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: isHovered ? const Color(0xFF222222) : const Color(0xFF333333),
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: GestureDetector(
+                          onTap: () => widget.onRemoveTask?.call(scheduledTask),
+                          child: Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(4),
+                              color: isHovered ? Colors.red.withOpacity(0.1) : Colors.transparent,
+                            ),
+                            child: Icon(
+                              Icons.close,
+                              size: 16,
+                              color: isHovered ? Colors.red[700] : Colors.grey[600],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  
+                  // Project name
+                  Text(
+                    scheduledTask.projectName,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: isHovered 
+                        ? scheduledTask.projectColor
+                        : scheduledTask.projectColor.withOpacity(0.8),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  
+                  // Priority badge
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: isHovered 
+                        ? _getPriorityColor(scheduledTask.task.priorityEnum)
+                        : _getPriorityColor(scheduledTask.task.priorityEnum).withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(4),
+                      boxShadow: isHovered ? [
+                        BoxShadow(
+                          color: _getPriorityColor(scheduledTask.task.priorityEnum).withOpacity(0.3),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ] : null,
+                    ),
+                    child: Text(
+                      _getPriorityText(scheduledTask.task.priorityEnum),
+                      style: const TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        
+        // If it's a subtask, make it narrower and right-aligned
+        if (isSubtask) {
+          return Align(
+            alignment: Alignment.centerRight,
+            child: FractionallySizedBox(
+              widthFactor: 0.95,
+              child: cardWidget,
+            ),
+          );
+        }
+        
+        // Regular tasks use full width
+        return cardWidget;
+      },
+    );
+  }
+
+  Color _getPriorityColor(Priority priority) {
+    switch (priority) {
+      case Priority.low:
+        return Colors.green;
+      case Priority.medium:
+        return Colors.orange;
+      case Priority.high:
+        return Colors.red;
+      case Priority.critical:
+        return Colors.purple;
+    }
+  }
+
+  String _getPriorityText(Priority priority) {
+    switch (priority) {
+      case Priority.low:
+        return 'Low';
+      case Priority.medium:
+        return 'Medium';
+      case Priority.high:
+        return 'High';
+      case Priority.critical:
+        return 'Critical';
+    }
+  }
+}
+
 class ProjectDetailPage extends StatefulWidget {
   final Project project;
   final Function(Project) onProjectUpdated;
+  final Function(Task, Project)? onAddToSchedule;
+  final List<Project> professionalProjects;
+  final List<Project> personalProjects;
+  final List<ScheduledTask>? scheduledTasks;
+  final Function(ScheduledTask)? onRemoveTask;
+  final Function(ScheduledTask)? onOpenTaskDetail;
+  final Function(ProjectDetailPage)? onScheduleUpdated;
+  final Function(Function())? onRegisterScheduleUpdate;
+  final Function(Function())? onUnregisterScheduleUpdate;
 
   const ProjectDetailPage({
     super.key,
     required this.project,
     required this.onProjectUpdated,
+    this.onAddToSchedule,
+    required this.professionalProjects,
+    required this.personalProjects,
+    this.scheduledTasks,
+    this.onRemoveTask,
+    this.onOpenTaskDetail,
+    this.onScheduleUpdated,
+    this.onRegisterScheduleUpdate,
+    this.onUnregisterScheduleUpdate,
   });
 
   @override
@@ -2015,16 +2828,48 @@ class ProjectDetailPage extends StatefulWidget {
 
 class _ProjectDetailPageState extends State<ProjectDetailPage> {
   late Project _project;
-  List<JiraIssue> _jiraIssues = [];
+  List<Task> _jiraIssues = [];
   bool _isLoadingJiraIssues = false;
   String? _jiraError;
+  List<ScheduledTask>? _currentScheduledTasks;
 
   @override
   void initState() {
     super.initState();
     _project = widget.project;
+    _currentScheduledTasks = widget.scheduledTasks;
     _fetchJiraIssues();
+    
+    // Register for schedule updates
+    widget.onRegisterScheduleUpdate?.call(_onScheduleUpdate);
   }
+
+  @override
+  void dispose() {
+    // Unregister from schedule updates
+    widget.onUnregisterScheduleUpdate?.call(_onScheduleUpdate);
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(ProjectDetailPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Update local state if the scheduledTasks prop changes
+    if (oldWidget.scheduledTasks != widget.scheduledTasks) {
+      _currentScheduledTasks = widget.scheduledTasks;
+    }
+  }
+
+  void _onScheduleUpdate() {
+    // Force rebuild when schedule updates
+    if (mounted) {
+      setState(() {
+        _currentScheduledTasks = widget.scheduledTasks;
+      });
+    }
+  }
+
+
 
   void _addTask(Task task) {
     setState(() {
@@ -2035,15 +2880,16 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
     widget.onProjectUpdated(_project);
   }
 
-  void _openJiraIssueDetail(JiraIssue issue) {
+  void _openJiraIssueDetail(Task issue) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => JiraIssueDetailPage(
-          issue: issue,
+        builder: (context) => TaskDetailPage(
+          task: issue,
           project: _project,
           projectName: _project.name,
           jiraBaseUrl: _project.jiraBaseUrl!,
           projectKey: _project.extractedJiraProjectKey!,
+          onAddToSchedule: widget.onAddToSchedule,
         ),
       ),
     );
@@ -2115,8 +2961,8 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
   void _showAddJiraTaskDialog() {
     showDialog(
       context: context,
-      builder: (context) => AddJiraTaskDialog(
-        project: _project,
+      builder: (context) => AddTaskDialog(
+        projectId: _project.id,
         onTaskCreated: (task) async {
           // TODO: Create task in Jira
           ScaffoldMessenger.of(context).showSnackBar(
@@ -2132,7 +2978,7 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
   void _openLocalTaskDetail(Task task) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => LocalTaskDetailPage(
+        builder: (context) => TaskDetailPage(
           task: task,
           project: _project,
           onTaskUpdated: (updatedTask) {
@@ -2155,6 +3001,7 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
             });
             widget.onProjectUpdated(_project);
           },
+          onAddToSchedule: widget.onAddToSchedule,
         ),
       ),
     );
@@ -2178,8 +3025,8 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
     }
   }
 
-  List<JiraIssue> _getSortedJiraIssues() {
-    final sortedIssues = List<JiraIssue>.from(_jiraIssues);
+  List<Task> _getSortedJiraIssues() {
+    final sortedIssues = List<Task>.from(_jiraIssues);
     sortedIssues.sort((a, b) {
       // Check if either task is "Done"
       final aIsDone = a.status.toLowerCase() == 'done' || 
@@ -2213,6 +3060,302 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
     return sortedIssues;
   }
 
+  Widget _buildProjectInfoPanel() {
+    return Hero(
+      tag: 'right_panel_transform',
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E1E1E),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.white, width: 1),
+          ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'PROJECT INFO',
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+                letterSpacing: 1.0,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Project Description
+                    _buildInfoSection(
+                      'Description',
+                      Icons.description,
+                      _project.description,
+                    ),
+                    
+                    // Tech Stack (for development projects)
+                    if (_project.techStack != null && _project.techStack!.isNotEmpty) ...[
+                      const SizedBox(height: 20),
+                      _buildInfoSection(
+                        'Tech Stack',
+                        Icons.build_circle,
+                        _project.techStack!,
+                      ),
+                    ],
+                    
+                    // Development Setup (for development projects)
+                    if (_project is DevelopmentProject) ...[
+                      const SizedBox(height: 20),
+                      _buildDevelopmentSetupSection(),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoSection(String title, IconData icon, String content) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey[800]!.withOpacity(0.3),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey[600]!.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: Colors.grey[300],
+              ),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[200],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            content,
+            style: const TextStyle(
+              fontSize: 12,
+              color: Colors.white,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDevelopmentSetupSection() {
+    final devProject = _project as DevelopmentProject;
+    
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _project.color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _project.color.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.developer_mode,
+                size: 16,
+                color: _project.color,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Development Setup',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: _project.color,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          
+          // GitHub Repo Path
+          if (devProject.githubRepoPath != null) ...[
+            _buildDevInfoItem(
+              'Repository Path',
+              Icons.folder,
+              devProject.githubRepoPath!,
+              isMonospace: true,
+            ),
+            const SizedBox(height: 12),
+          ],
+          
+          // Setup Script
+          if (devProject.setupScriptContent != null) ...[
+            _buildDevInfoItem(
+              'Setup Script',
+              Icons.play_circle_outline,
+              devProject.setupScriptContent!,
+              isMonospace: true,
+              maxLines: 4,
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () async {
+                  try {
+                    await devProject.runSetupScript();
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Setup script executed successfully!'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Error running setup script: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+                icon: const Icon(Icons.play_arrow, size: 16),
+                label: const Text('Run Script', style: TextStyle(fontSize: 12)),
+              ),
+            ),
+          ] else if (devProject.githubRepoPath == null) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.blue[200]!),
+              ),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    color: Colors.blue[600],
+                    size: 20,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'No setup configured',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w500,
+                      color: Colors.blue[800],
+                      fontSize: 12,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Edit project to configure',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Colors.blue[600],
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDevInfoItem(
+    String label,
+    IconData icon,
+    String content, {
+    bool isMonospace = false,
+    int? maxLines,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(
+              icon,
+              size: 12,
+              color: Colors.grey[300],
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '$label:',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: Colors.grey[300],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: isMonospace ? Colors.grey[900] : Colors.grey[100],
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: Colors.grey[300]!),
+          ),
+          child: Text(
+            content,
+            style: TextStyle(
+              fontFamily: isMonospace ? 'monospace' : null,
+              fontSize: 10,
+              color: isMonospace ? Colors.white : Colors.black87,
+              height: 1.3,
+            ),
+            maxLines: maxLines,
+            overflow: maxLines != null ? TextOverflow.ellipsis : null,
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Sort Jira issues: Done tasks at bottom, others by priority (highest to lowest)
@@ -2225,557 +3368,426 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
 
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
-      appBar: AppBar(
-        title: Text(_project.name),
-        backgroundColor: _project.color,
-        foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            onPressed: hasJiraConnection ? _showAddJiraTaskDialog : _showAddTaskDialog,
-            icon: const Icon(Icons.add),
-            tooltip: hasJiraConnection ? 'Add Jira Task' : 'Add Local Task',
-          ),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
+      body: SafeArea(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Project Info Card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: _project.color.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Icon(
-                            _project.icon,
-                            color: _project.color,
-                            size: 24,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _project.name,
-                                style: const TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              if (_project.extractedJiraProjectKey != null) ...[
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Jira Project: ${_project.extractedJiraProjectKey}',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.blue[600],
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              hasJiraConnection 
-                                ? '${sortedJiraIssues.where((issue) => !issue.isSubtask && (issue.status.toLowerCase() == 'done' || issue.status.toLowerCase() == 'closed' || issue.status.toLowerCase() == 'resolved')).length}/${sortedJiraIssues.where((issue) => !issue.isSubtask).length}'
-                                : '${_project.completedTasks}/${_project.tasks.length}',
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            Text(
-                              'completed',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+            // Title area to match dashboard layout
+            Padding(
+              padding: const EdgeInsets.only(top: 20.0, left: 20.0, right: 20.0, bottom: 20.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // Back button
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: Icon(Icons.arrow_back, color: Colors.grey[300]),
+                  ),
+                  // Project name in dashboard title style
+                  Text(
+                    _project.name.toUpperCase(),
+                    style: const TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      letterSpacing: 2.0,
                     ),
-                    const SizedBox(height: 16),
-                    Text(
-                      _project.description,
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.grey[700],
-                      ),
-                    ),
-                    if ((hasJiraConnection ? sortedJiraIssues.isNotEmpty : _project.tasks.isNotEmpty)) ...[
-                      const SizedBox(height: 16),
-                      LinearProgressIndicator(
-                        value: progressPercentage / 100,
-                        backgroundColor: Colors.grey[200],
-                        valueColor: AlwaysStoppedAnimation<Color>(_project.color),
-                        minHeight: 8,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '${progressPercentage.toInt()}% Complete',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: _project.color,
-                        ),
-                      ),
-                      
-                      // Sprint Progress Bar
-                      if (hasJiraConnection && _project.getSprintIssueCount(sortedJiraIssues) > 0) ...[
-                        const SizedBox(height: 12),
-                        LinearProgressIndicator(
-                          value: _project.getSprintProgressPercentage(sortedJiraIssues) / 100,
-                          backgroundColor: Colors.grey[200],
-                          valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFCCF7FF)),
-                          minHeight: 6,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          '${_project.getSprintProgressPercentage(sortedJiraIssues).toInt()}% Sprint Complete',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                            color: Color(0xFF0066CC),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ],
-                ),
+                  ),
+                  // Add task button
+                  IconButton(
+                    onPressed: hasJiraConnection ? _showAddJiraTaskDialog : _showAddTaskDialog,
+                    icon: Icon(Icons.add, color: Colors.grey[300]),
+                    tooltip: hasJiraConnection ? 'Add Jira Task' : 'Add Local Task',
+                  ),
+                ],
               ),
             ),
             
-            const SizedBox(height: 16),
-            
-            // Development Project Features Section
-            if (_project is DevelopmentProject) ...[
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.developer_mode,
-                            color: _project.color,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Development Setup',
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      
-                      // GitHub Repo Path
-                      if ((_project as DevelopmentProject).githubRepoPath != null) ...[
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.folder,
-                              size: 16,
-                              color: Colors.grey[600],
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Repository Path:',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w500,
-                                color: Colors.grey[300],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.grey[100],
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.grey[300]!),
-                          ),
-                          child: Text(
-                            (_project as DevelopmentProject).githubRepoPath!,
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                      ],
-                      
-                      // Setup Script
-                      if ((_project as DevelopmentProject).setupScriptContent != null) ...[
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.play_circle_outline,
-                              size: 16,
-                              color: Colors.grey[600],
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Setup Script:',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w500,
-                                color: Colors.grey[300],
-                              ),
-                            ),
-                            const Spacer(),
-                            ElevatedButton.icon(
-                              onPressed: () async {
-                                try {
-                                  await (_project as DevelopmentProject).runSetupScript();
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Setup script executed successfully!'),
-                                        backgroundColor: Colors.green,
-                                      ),
-                                    );
-                                  }
-                                } catch (e) {
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Error running setup script: $e'),
-                                        backgroundColor: Colors.red,
-                                      ),
-                                    );
-                                  }
-                                }
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                              ),
-                              icon: const Icon(Icons.play_arrow, size: 16),
-                              label: const Text('Run Script'),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.grey[900],
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            (_project as DevelopmentProject).setupScriptContent!,
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 12,
-                              color: Colors.white,
-                            ),
-                            maxLines: 6,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ] else if ((_project as DevelopmentProject).githubRepoPath == null) ...[
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.blue[50],
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.blue[200]!),
-                          ),
-                          child: Column(
-                            children: [
-                              Icon(
-                                Icons.info_outline,
-                                color: Colors.blue[600],
-                                size: 24,
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'No development setup configured',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w500,
-                                  color: Colors.blue[800],
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Edit this project to add GitHub repo path and setup script',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.blue[600],
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
-            
-            // Content List
+            // Three-column layout to match dashboard exactly
             Expanded(
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                child: Row(
                   children: [
-                    // Jira Issues Section (if connected)
-                    if (_project.extractedJiraProjectKey != null) ...[
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.link,
-                                size: 20,
-                                color: _project.color,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Jira Issues',
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.grey[800],
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (_isLoadingJiraIssues)
-                            const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          else
-                            IconButton(
-                              onPressed: _fetchJiraIssues,
-                              icon: Icon(Icons.refresh, color: _project.color),
-                              tooltip: 'Refresh Jira Issues',
-                            ),
-                        ],
+                    // Left Panel - Schedule (20%) - Same as dashboard
+                    Expanded(
+                      flex: 20,
+                      child: Hero(
+                        tag: 'schedule_panel',
+                        child: Material(
+                          color: Colors.transparent,
+                          child: _buildSchedulePanelForProject(),
+                        ),
                       ),
-                      
-                      const SizedBox(height: 8),
-                      
-                      if (_jiraError != null)
-                        Card(
-                          color: Colors.red[50],
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Icon(Icons.error, color: Colors.red[600]),
-                                    const SizedBox(width: 8),
+                    ),
+                    
+                    const SizedBox(width: 20),
+                    
+                    // Center Panel - Project Content (60%) to match dashboard center panel
+                    Expanded(
+                      flex: 60,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Project Info Card
+                          Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      GestureDetector(
+                                        onTap: () => Navigator.of(context).pop(),
+                                        child: Container(
+                                          padding: const EdgeInsets.all(12),
+                                          decoration: BoxDecoration(
+                                            color: Colors.grey[200],
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                          child: Icon(
+                                            Icons.arrow_back,
+                                            color: Colors.grey[600],
+                                            size: 24,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              _project.name,
+                                              style: const TextStyle(
+                                                fontSize: 24,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            if (_project.extractedJiraProjectKey != null) ...[
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                'Jira Project: ${_project.extractedJiraProjectKey}',
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  color: Colors.blue[600],
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                      Column(
+                                        crossAxisAlignment: CrossAxisAlignment.end,
+                                        children: [
+                                          Text(
+                                            hasJiraConnection 
+                                              ? '${sortedJiraIssues.where((issue) => !issue.isSubtask && issue.isCompleted).length}/${sortedJiraIssues.where((issue) => !issue.isSubtask).length}'
+                                              : '${_project.completedTasks}/${_project.tasks.length}',
+                                            style: const TextStyle(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          Text(
+                                            'completed',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey[600],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                  if ((hasJiraConnection ? sortedJiraIssues.isNotEmpty : _project.tasks.isNotEmpty)) ...[
+                                    const SizedBox(height: 16),
+                                    LinearProgressIndicator(
+                                      value: progressPercentage / 100,
+                                      backgroundColor: Colors.grey[200],
+                                      valueColor: AlwaysStoppedAnimation<Color>(_project.color),
+                                      minHeight: 8,
+                                    ),
+                                    const SizedBox(height: 8),
                                     Text(
-                                      'Failed to load Jira issues',
+                                      '${progressPercentage.toInt()}% Complete',
                                       style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.red[600],
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: _project.color,
                                       ),
                                     ),
+                                    
+                                    // Sprint Progress Bar
+                                    if (hasJiraConnection && _project.getSprintIssueCount(sortedJiraIssues) > 0) ...[
+                                      const SizedBox(height: 12),
+                                      LinearProgressIndicator(
+                                        value: _project.getSprintProgressPercentage(sortedJiraIssues) / 100,
+                                        backgroundColor: Colors.grey[200],
+                                        valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFCCF7FF)),
+                                        minHeight: 6,
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        '${_project.getSprintProgressPercentage(sortedJiraIssues).toInt()}% Sprint Complete',
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w500,
+                                          color: Color(0xFF0066CC),
+                                        ),
+                                      ),
+                                    ],
                                   ],
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  _jiraError!,
-                                  style: TextStyle(color: Colors.red[600]),
-                                ),
-                              ],
-                            ),
-                          ),
-                        )
-                      else if (_isLoadingJiraIssues)
-                        const Card(
-                          child: Padding(
-                            padding: EdgeInsets.all(32),
-                            child: Center(
-                              child: Column(
-                                children: [
-                                  CircularProgressIndicator(),
-                                  SizedBox(height: 16),
-                                  Text('Loading Jira issues...'),
                                 ],
                               ),
                             ),
                           ),
-                        )
-                      else if (sortedJiraIssues.isEmpty)
-                        Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(32),
-                            child: Column(
-                              children: [
-                                Icon(
-                                  Icons.link_off,
-                                  size: 48,
-                                  color: Colors.grey[400],
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  'No Jira issues found',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Project: ${_project.extractedJiraProjectKey}',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey[500],
-                                  ),
-                                ),
-                              ],
+                          
+                          const SizedBox(height: 16),
+                          
+                          // Content List
+                          Expanded(
+                            child: SingleChildScrollView(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // Jira Issues Section (if connected)
+                                  if (_project.extractedJiraProjectKey != null) ...[
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Icon(
+                                              Icons.link,
+                                              size: 20,
+                                              color: _project.color,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              'Jira Issues',
+                                              style: TextStyle(
+                                                fontSize: 20,
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.grey[800],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        if (_isLoadingJiraIssues)
+                                          const SizedBox(
+                                            width: 20,
+                                            height: 20,
+                                            child: CircularProgressIndicator(strokeWidth: 2),
+                                          )
+                                        else
+                                          IconButton(
+                                            onPressed: _fetchJiraIssues,
+                                            icon: Icon(Icons.refresh, color: _project.color),
+                                            tooltip: 'Refresh Jira Issues',
+                                          ),
+                                      ],
+                                    ),
+                                    
+                                    const SizedBox(height: 8),
+                                    
+                                    if (_jiraError != null)
+                                      Card(
+                                        color: Colors.red[50],
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(16),
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  Icon(Icons.error, color: Colors.red[600]),
+                                                  const SizedBox(width: 8),
+                                                  Text(
+                                                    'Failed to load Jira issues',
+                                                    style: TextStyle(
+                                                      fontWeight: FontWeight.bold,
+                                                      color: Colors.red[600],
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 8),
+                                              Text(
+                                                _jiraError!,
+                                                style: TextStyle(color: Colors.red[600]),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      )
+                                    else if (_isLoadingJiraIssues)
+                                      const Card(
+                                        child: Padding(
+                                          padding: EdgeInsets.all(32),
+                                          child: Center(
+                                            child: Column(
+                                              children: [
+                                                CircularProgressIndicator(),
+                                                SizedBox(height: 16),
+                                                Text('Loading Jira issues...'),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                    else if (sortedJiraIssues.isEmpty)
+                                      Card(
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(32),
+                                          child: Column(
+                                            children: [
+                                              Icon(
+                                                Icons.link_off,
+                                                size: 48,
+                                                color: Colors.grey[400],
+                                              ),
+                                              const SizedBox(height: 16),
+                                              Text(
+                                                'No Jira issues found',
+                                                style: TextStyle(
+                                                  fontSize: 16,
+                                                  color: Colors.grey[600],
+                                                ),
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                'Project: ${_project.extractedJiraProjectKey}',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey[500],
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      )
+                                    else
+                                      ...sortedJiraIssues.map((issue) => _buildJiraIssueCard(issue)),
+                                  ],
+                                  
+                                  // Local Tasks Section (only if no Jira connection)
+                                  if (!hasJiraConnection) ...[
+                                    if (_project.extractedJiraProjectKey != null) 
+                                      const SizedBox(height: 24),
+                                      
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Icon(
+                                              Icons.task_alt,
+                                              size: 20,
+                                              color: _project.color,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              'Local Tasks',
+                                              style: TextStyle(
+                                                fontSize: 20,
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.grey[800],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        ElevatedButton.icon(
+                                          onPressed: _showAddTaskDialog,
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: _project.color,
+                                            foregroundColor: Colors.white,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                          ),
+                                          icon: const Icon(Icons.add, size: 16),
+                                          label: const Text('Add Task'),
+                                        ),
+                                      ],
+                                    ),
+                                    
+                                    const SizedBox(height: 8),
+                                    
+                                    // Local Tasks List
+                                    if (_project.tasks.isEmpty)
+                                      Card(
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(32),
+                                          child: Column(
+                                            children: [
+                                              Icon(
+                                                Icons.assignment,
+                                                size: 48,
+                                                color: Colors.grey[400],
+                                              ),
+                                              const SizedBox(height: 16),
+                                              Text(
+                                                'No local tasks yet',
+                                                style: TextStyle(
+                                                  fontSize: 16,
+                                                  color: Colors.grey[600],
+                                                ),
+                                              ),
+                                              const SizedBox(height: 8),
+                                              Text(
+                                                'Add tasks for notes and reminders',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey[500],
+                                                ),
+                                              ),
+                                              const SizedBox(height: 16),
+                                              ElevatedButton.icon(
+                                                onPressed: _showAddTaskDialog,
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor: _project.color,
+                                                  foregroundColor: Colors.white,
+                                                  padding: const EdgeInsets.symmetric(
+                                                    horizontal: 24,
+                                                    vertical: 12,
+                                                  ),
+                                                  shape: RoundedRectangleBorder(
+                                                    borderRadius: BorderRadius.circular(8),
+                                                  ),
+                                                ),
+                                                icon: const Icon(Icons.add),
+                                                label: const Text(
+                                                  'Add Your First Task',
+                                                  style: TextStyle(
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      )
+                                    else
+                                      ..._project.tasks.where((task) => !task.isSubtask).map((task) => _buildLocalTaskCard(task)),
+                                  ],
+                                ],
+                              ),
                             ),
-                          ),
-                        )
-                      else
-                        ...sortedJiraIssues.map((issue) => _buildJiraIssueCard(issue)),
-                    ],
-                    
-                    // Local Tasks Section (only if no Jira connection)
-                    if (!hasJiraConnection) ...[
-                      if (_project.extractedJiraProjectKey != null) 
-                        const SizedBox(height: 24),
-                        
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.task_alt,
-                                size: 20,
-                                color: _project.color,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Local Tasks',
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.grey[800],
-                                ),
-                              ),
-                            ],
-                          ),
-                          ElevatedButton.icon(
-                            onPressed: _showAddTaskDialog,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _project.color,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                            icon: const Icon(Icons.add, size: 16),
-                            label: const Text('Add Task'),
                           ),
                         ],
                       ),
-                      
-                      const SizedBox(height: 8),
-                      
-                      // Local Tasks List
-                      if (_project.tasks.isEmpty)
-                        Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(32),
-                            child: Column(
-                              children: [
-                                Icon(
-                                  Icons.assignment,
-                                  size: 48,
-                                  color: Colors.grey[400],
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  'No local tasks yet',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Add tasks for notes and reminders',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey[500],
-                                  ),
-                                ),
-                                const SizedBox(height: 16),
-                                ElevatedButton.icon(
-                                  onPressed: _showAddTaskDialog,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: _project.color,
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 24,
-                                      vertical: 12,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                  ),
-                                  icon: const Icon(Icons.add),
-                                  label: const Text(
-                                    'Add Your First Task',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        )
-                      else
-                        ..._project.tasks.where((task) => !task.isSubtask).map((task) => _buildLocalTaskCard(task)),
-                    ],
+                    ),
+                    
+                    const SizedBox(width: 20),
+                    
+                    // Right Panel - Project Info (20%) - Exact position as Updates column
+                    Expanded(
+                      flex: 20,
+                      child: _buildProjectInfoPanel(),
+                    ),
                   ],
                 ),
               ),
@@ -2812,10 +3824,8 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
     }
   }
 
-  Widget _buildJiraIssueCard(JiraIssue issue) {
-    final isDone = issue.status.toLowerCase() == 'done' || 
-                   issue.status.toLowerCase() == 'closed' ||
-                   issue.status.toLowerCase() == 'resolved';
+  Widget _buildJiraIssueCard(Task issue) {
+    final isDone = issue.isCompleted;
     
     // Determine card background color
     Color? cardColor;
@@ -2856,7 +3866,7 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
           children: [
             Expanded(
               child: Text(
-                issue.summary,
+                issue.title,
                 style: TextStyle(
                   fontWeight: FontWeight.w500,
                   color: isDone ? Colors.grey[600] : null,
@@ -2976,10 +3986,42 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
             ),
           ],
         ),
-        trailing: Icon(
-          Icons.arrow_forward_ios,
-          size: 16,
-          color: isDone ? Colors.grey[400] : Colors.grey[400],
+        trailing: StatefulBuilder(
+          builder: (context, setState) {
+            bool isHovered = false;
+            
+            return MouseRegion(
+              cursor: SystemMouseCursors.click,
+              onEnter: (_) => setState(() => isHovered = true),
+              onExit: (_) => setState(() => isHovered = false),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                transform: isHovered
+                    ? (Matrix4.identity()..translate(0.0, -2.5, 0.0))
+                    : Matrix4.identity(),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: isHovered ? const Color(0xFFc0c0c0) : const Color(0xFFFAFAFA),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(isHovered ? 0.2 : 0.1),
+                      blurRadius: isHovered ? 20 : 8,
+                      offset: Offset(0, isHovered ? 8 : 4),
+                    ),
+                  ],
+                ),
+                child: IconButton(
+                  onPressed: () => widget.onAddToSchedule?.call(_convertJiraIssueToTask(issue), _project),
+                  icon: Icon(
+                    Icons.schedule, 
+                    size: 20,
+                    color: isHovered ? Colors.green[700] : Colors.green[600],
+                  ),
+                  tooltip: 'Add to Schedule',
+                ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -3007,8 +4049,8 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (task.description.isNotEmpty) ...[
-              Text(task.description),
+                              if (task.description?.isNotEmpty == true) ...[
+                              Text(task.description ?? ''),
               const SizedBox(height: 4),
             ],
             Row(
@@ -3034,14 +4076,14 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
-                    color: _getPriorityColor(task.priority).withOpacity(0.1),
+                    color: _getPriorityColor(task.priorityEnum).withOpacity(0.1),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    _getPriorityText(task.priority),
+                    _getPriorityText(task.priorityEnum),
                     style: TextStyle(
                       fontSize: 12,
-                      color: _getPriorityColor(task.priority),
+                      color: _getPriorityColor(task.priorityEnum),
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -3050,10 +4092,42 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
             ),
           ],
         ),
-        trailing: Icon(
-          Icons.arrow_forward_ios,
-          size: 16,
-          color: Colors.grey[400],
+        trailing: StatefulBuilder(
+          builder: (context, setState) {
+            bool isHovered = false;
+            
+            return MouseRegion(
+              cursor: SystemMouseCursors.click,
+              onEnter: (_) => setState(() => isHovered = true),
+              onExit: (_) => setState(() => isHovered = false),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                transform: isHovered
+                    ? (Matrix4.identity()..translate(0.0, -2.5, 0.0))
+                    : Matrix4.identity(),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: isHovered ? const Color(0xFFc0c0c0) : const Color(0xFFFAFAFA),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(isHovered ? 0.2 : 0.1),
+                      blurRadius: isHovered ? 20 : 8,
+                      offset: Offset(0, isHovered ? 8 : 4),
+                    ),
+                  ],
+                ),
+                child: IconButton(
+                  onPressed: () => widget.onAddToSchedule?.call(task, _project),
+                  icon: Icon(
+                    Icons.schedule, 
+                    size: 20,
+                    color: isHovered ? Colors.green[700] : Colors.green[600],
+                  ),
+                  tooltip: 'Add to Schedule',
+                ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -3096,6 +4170,58 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
         return Colors.grey;
     }
   }
+
+  Task _convertJiraIssueToTask(Task issue) {
+    return issue.copyWith(projectId: _project.id);
+  }
+
+  // Reuse the dashboard's schedule panel with project-specific refresh
+  Widget _buildSchedulePanelForProject() {
+    return SharedSchedulePanel(
+      onRefresh: () async {
+        // Refresh assigned issues for this specific project
+        if (_project.extractedJiraProjectKey != null) {
+          try {
+            final jiraService = JiraService.instance;
+            final assignedIssues = await jiraService.fetchMyAssignedIssues(
+              _project.jiraBaseUrl!,
+              _project.extractedJiraProjectKey!,
+            );
+            
+            int addedCount = 0;
+            for (final issue in assignedIssues) {
+              final task = _convertJiraIssueToTask(issue);
+              widget.onAddToSchedule?.call(task, _project);
+              addedCount++;
+            }
+            
+            if (addedCount > 0) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Added $addedCount assigned tasks to schedule'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
+          } catch (e) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Error fetching assigned issues: $e'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
+      },
+      refreshTooltip: 'Refresh Assigned Tasks for ${_project.name}',
+      scheduledTasks: _currentScheduledTasks,
+      onRemoveTask: widget.onRemoveTask,
+      onOpenTaskDetail: widget.onOpenTaskDetail,
+      showFullSchedule: true,
+    );
+  }
+
+  
 }
 
 class AddTaskDialog extends StatefulWidget {
@@ -3130,12 +4256,14 @@ class AddTaskDialog extends StatefulWidget {
 
     final task = Task(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
+      key: DateTime.now().millisecondsSinceEpoch.toString(),
       title: _titleController.text,
       description: _descriptionController.text,
       projectId: widget.projectId,
       createdAt: DateTime.now(),
+      status: 'To Do',
       jiraTicketId: _jiraTicketController.text.isEmpty ? null : _jiraTicketController.text,
-      priority: _selectedPriority,
+      priorityEnum: _selectedPriority,
     );
 
     widget.onTaskCreated(task);
@@ -3600,216 +4728,56 @@ class _EditProjectDialogState extends State<EditProjectDialog> {
   }
 }
 
-class EditJiraIssueDialog extends StatefulWidget {
-  final JiraIssue issue;
-  final String baseUrl;
-  final Function(JiraIssue) onIssueUpdated;
+// Removed broken EditTaskDialog - using the working one below
 
-  const EditJiraIssueDialog({
-    super.key,
-    required this.issue,
-    required this.baseUrl,
-    required this.onIssueUpdated,
-  });
-
-  @override
-  State<EditJiraIssueDialog> createState() => _EditJiraIssueDialogState();
-}
-
-class _EditJiraIssueDialogState extends State<EditJiraIssueDialog> {
-  late TextEditingController _summaryController;
-  late TextEditingController _descriptionController;
-  String? _selectedPriority;
-  bool _isLoading = false;
-
-  final List<String> _priorities = ['Low', 'Medium', 'High', 'Highest'];
-
-  @override
-  void initState() {
-    super.initState();
-    _summaryController = TextEditingController(text: widget.issue.summary);
-    _descriptionController = TextEditingController(text: widget.issue.description ?? '');
-    _selectedPriority = widget.issue.priority ?? 'Medium';
-  }
-
-  @override
-  void dispose() {
-    _summaryController.dispose();
-    _descriptionController.dispose();
-    super.dispose();
-  }
-
-  void _saveIssue() async {
-    if (_summaryController.text.trim().isEmpty) return;
-
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final jiraService = JiraService.instance;
-      await jiraService.editIssue(
-        baseUrl: widget.baseUrl,
-        issueKey: widget.issue.key,
-        summary: _summaryController.text.trim(),
-        description: _descriptionController.text.trim(),
-        priority: _selectedPriority,
-      );
-
-      // Create updated issue object
-      final updatedIssue = JiraIssue(
-        id: widget.issue.id,
-        key: widget.issue.key,
-        summary: _summaryController.text.trim(),
-        description: _descriptionController.text.trim(),
-        status: widget.issue.status,
-        assignee: widget.issue.assignee,
-        priority: _selectedPriority,
-        created: widget.issue.created,
-        updated: DateTime.now(),
-        sprintName: widget.issue.sprintName,
-        isInActiveSprint: widget.issue.isInActiveSprint,
-        subtasks: widget.issue.subtasks,
-        parentKey: widget.issue.parentKey,
-        isSubtask: widget.issue.isSubtask,
-      );
-
-      widget.onIssueUpdated(updatedIssue);
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Successfully updated issue ${widget.issue.key}'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        Navigator.of(context).pop();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to update issue: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('Edit Issue ${widget.issue.key}'),
-      content: SizedBox(
-        width: 500,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _summaryController,
-              decoration: const InputDecoration(
-                labelText: 'Summary',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 2,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _descriptionController,
-              decoration: const InputDecoration(
-                labelText: 'Description',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 4,
-            ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              value: _selectedPriority,
-              decoration: const InputDecoration(
-                labelText: 'Priority',
-                border: OutlineInputBorder(),
-              ),
-              items: _priorities.map((priority) {
-                return DropdownMenuItem(
-                  value: priority,
-                  child: Text(priority),
-                );
-              }).toList(),
-              onChanged: (priority) {
-                setState(() {
-                  _selectedPriority = priority;
-                });
-              },
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: _isLoading ? null : _saveIssue,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.blue,
-            foregroundColor: Colors.white,
-          ),
-          child: _isLoading
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                ),
-              )
-            : const Text('Save Changes'),
-        ),
-      ],
-    );
-  }
-}
-
-class JiraIssueDetailPage extends StatefulWidget {
-  final JiraIssue issue;
+class TaskDetailPage extends StatefulWidget {
+  final Task task;
   final Project project;
-  final String projectName;
-  final String jiraBaseUrl;
-  final String projectKey;
+  final String? projectName;
+  final String? jiraBaseUrl;
+  final String? projectKey;
+  final Function(Task, Project)? onAddToSchedule;
+  final Function(Task)? onTaskUpdated;
+  final Function(Task)? onTaskDeleted;
 
-  const JiraIssueDetailPage({
+  const TaskDetailPage({
     super.key,
-    required this.issue,
+    required this.task,
     required this.project,
-    required this.projectName,
-    required this.jiraBaseUrl,
-    required this.projectKey,
+    this.projectName,
+    this.jiraBaseUrl,
+    this.projectKey,
+    this.onAddToSchedule,
+    this.onTaskUpdated,
+    this.onTaskDeleted,
   });
 
   @override
-  State<JiraIssueDetailPage> createState() => _JiraIssueDetailPageState();
+  State<TaskDetailPage> createState() => _TaskDetailPageState();
 }
 
-class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
-  late JiraIssue _issue;
+class _TaskDetailPageState extends State<TaskDetailPage> {
+  late Task _task;
   bool _isLoading = false;
   bool _isExpandingTask = false;
 
   @override
   void initState() {
     super.initState();
-    _issue = widget.issue;
+    _task = widget.task;
   }
 
-  Future<void> _expandJiraIssueWithAI() async {
+  // Check if this is a Jira task
+  bool get isJiraTask => widget.jiraBaseUrl != null && widget.projectKey != null && _task.jiraTicketId != null;
+
+  void _toggleCompletion() {
+    setState(() {
+      _task = _task.copyWith(isCompleted: !_task.isCompleted);
+    });
+    widget.onTaskUpdated?.call(_task);
+  }
+
+  Future<void> _expandTaskWithAI() async {
     if (widget.project.projectSummary == null || widget.project.projectSummary!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -3826,7 +4794,7 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
 
     try {
       final aiService = AIExpandService();
-      final taskDescription = _issue.description?.isNotEmpty == true ? _issue.description! : _issue.summary;
+      final taskDescription = _task.description?.isNotEmpty == true ? _task.description! : _task.title;
       
       final subtaskItems = await aiService.expandTask(
         taskDescription: taskDescription,
@@ -3836,36 +4804,75 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
       );
 
       if (mounted) {
-        // Create actual Jira subtasks
-        final jiraService = JiraService.instance;
-        List<JiraIssue> createdSubtasks = [];
-        
-        for (final item in subtaskItems) {
-          try {
-            final subtask = await jiraService.createSubtask(
-              baseUrl: widget.jiraBaseUrl,
-              projectKey: widget.projectKey,
-              parentIssueKey: _issue.key,
-              summary: '${item.title}: ${item.prompt}', // Combine title and description
-              priority: 'Medium',
-            );
-            createdSubtasks.add(subtask);
-            print('Created subtask: ${subtask.key} - ${subtask.summary}');
-          } catch (e) {
-            print('Failed to create subtask "${item.title}": $e');
+        if (isJiraTask) {
+          // Create actual Jira subtasks
+          final jiraService = JiraService.instance;
+          List<Task> createdSubtasks = [];
+          
+          for (final item in subtaskItems) {
+            try {
+              final subtask = await jiraService.createSubtask(
+                baseUrl: widget.jiraBaseUrl!,
+                projectKey: widget.projectKey!,
+                parentIssueKey: _task.key,
+                summary: '${item.title}: ${item.prompt}', // Combine title and description
+                priority: 'Medium',
+              );
+              createdSubtasks.add(subtask);
+              print('Created subtask: ${subtask.key} - ${subtask.title}');
+            } catch (e) {
+              print('Failed to create subtask "${item.title}": $e');
+            }
           }
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Successfully created ${createdSubtasks.length} of ${subtaskItems.length} AI-generated subtasks!'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.green,
+            ),
+          );
+          
+          // Refresh the issue to show the new subtasks
+          await _refreshIssue();
+        } else {
+          // Create local subtasks
+          final List<Task> newSubtasks = [];
+          
+          for (final item in subtaskItems) {
+            final subtask = Task(
+              id: DateTime.now().millisecondsSinceEpoch.toString() + '_${item.id}',
+              key: DateTime.now().millisecondsSinceEpoch.toString() + '_${item.id}',
+              title: item.title,
+              description: item.prompt,
+              projectId: widget.project.id,
+              createdAt: DateTime.now(),
+              status: 'To Do',
+              priorityEnum: Priority.medium,
+              parentKey: _task.key,
+              isSubtask: true,
+            );
+            newSubtasks.add(subtask);
+            print('Created local subtask: ${subtask.title}');
+          }
+          
+          // Update the current task with the new subtasks
+          setState(() {
+            _task = _task.copyWith(subtasks: [..._task.subtasks, ...newSubtasks]);
+          });
+          widget.onTaskUpdated?.call(_task);
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Successfully created ${newSubtasks.length} AI-generated subtasks!'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.green,
+            ),
+          );
+          
+          // Show subtasks dialog for local tasks
+          _showSubtasksDialog(newSubtasks);
         }
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Successfully created ${createdSubtasks.length} of ${subtaskItems.length} AI-generated subtasks!'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.green,
-          ),
-        );
-        
-        // Refresh the issue to show the new subtasks
-        await _refreshIssue();
       }
     } catch (e) {
       if (mounted) {
@@ -3890,18 +4897,18 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
     try {
       final jiraService = JiraService.instance;
       final issues = await jiraService.fetchProjectIssues(
-        widget.jiraBaseUrl,
-        widget.projectKey,
+                            widget.jiraBaseUrl!,
+                    widget.projectKey!,
       );
       
       final updatedIssue = issues.firstWhere(
-        (issue) => issue.key == _issue.key,
-        orElse: () => _issue,
+        (issue) => issue.key == _task.key,
+        orElse: () => _task,
       );
       
       if (mounted) {
         setState(() {
-          _issue = updatedIssue;
+          _task = updatedIssue;
         });
       }
     } catch (e) {
@@ -3916,27 +4923,27 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
     }
   }
 
-  void _editJiraIssue() {
+  void _editTask() {
     showDialog(
       context: context,
-      builder: (context) => EditJiraIssueDialog(
-        issue: _issue,
-        baseUrl: widget.jiraBaseUrl,
-        onIssueUpdated: (updatedIssue) {
+      builder: (context) => EditTaskDialog(
+        task: _task,
+        onTaskUpdated: (updatedTask) {
           setState(() {
-            _issue = updatedIssue;
+            _task = updatedTask;
           });
+          widget.onTaskUpdated?.call(_task);
         },
       ),
     );
   }
 
-  void _deleteJiraIssue() {
+  void _deleteTask() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Jira Issue'),
-        content: Text('Are you sure you want to delete "${_issue.summary}"? This action cannot be undone and will delete the issue from Jira.'),
+        title: Text(isJiraTask ? 'Delete Jira Issue' : 'Delete Task'),
+        content: Text('Are you sure you want to delete "${_task.title}"? This action cannot be undone${isJiraTask ? ' and will delete the issue from Jira' : ''}.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
@@ -3946,45 +4953,127 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
             onPressed: () async {
               Navigator.of(context).pop(); // Close dialog
               
-              try {
-                setState(() {
-                  _isLoading = true;
-                });
-                
-                final jiraService = JiraService.instance;
-                await jiraService.deleteIssue(
-                  baseUrl: widget.jiraBaseUrl,
-                  issueKey: _issue.key,
-                );
-                
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Successfully deleted issue ${_issue.key}'),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
-                  Navigator.of(context).pop(); // Go back to project view
-                }
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Failed to delete issue: $e'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
-              } finally {
-                if (mounted) {
+              if (isJiraTask) {
+                try {
                   setState(() {
-                    _isLoading = false;
+                    _isLoading = true;
                   });
+                  
+                  final jiraService = JiraService.instance;
+                  await jiraService.deleteIssue(
+                    baseUrl: widget.jiraBaseUrl!,
+                    issueKey: _task.key,
+                  );
+                  
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Successfully deleted issue ${_task.key}'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                    Navigator.of(context).pop(); // Go back to project view
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Failed to delete issue: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                } finally {
+                  if (mounted) {
+                    setState(() {
+                      _isLoading = false;
+                    });
+                  }
                 }
+              } else {
+                // Local task deletion
+                Navigator.of(context).pop(); // Go back to project view
+                widget.onTaskDeleted?.call(_task);
               }
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSubtasksDialog(List<Task> subtasks) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.auto_awesome, color: Colors.purple),
+            const SizedBox(width: 8),
+            const Text('AI Expanded Subtasks'),
+          ],
+        ),
+        content: SizedBox(
+          width: 500,
+          height: 400,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Created ${subtasks.length} subtasks:',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: subtasks.length,
+                  itemBuilder: (context, index) {
+                    final subtask = subtasks[index];
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              subtask.title,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              subtask.description ?? '',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).pop(); // Go back to project view
+            },
+            child: const Text('View in Project'),
           ),
         ],
       ),
@@ -4025,7 +5114,7 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Creating subtask for ${_issue.key}',
+                          'Creating subtask for ${_task.key}',
                           style: TextStyle(
                             color: Colors.blue[700],
                             fontSize: 12,
@@ -4154,9 +5243,9 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
       }
 
       await jiraService.createSubtask(
-        baseUrl: widget.jiraBaseUrl,
-        projectKey: widget.projectKey,
-        parentIssueKey: _issue.key,
+        baseUrl: widget.jiraBaseUrl!,
+        projectKey: widget.projectKey!,
+        parentIssueKey: _task.key,
         summary: description.isNotEmpty ? '$summary: $description' : summary, // Combine summary and description
         priority: jiraPriority,
       );
@@ -4188,7 +5277,7 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
     }
   }
 
-  Widget _buildSubtaskCard(JiraIssue subtask) {
+  Widget _buildSubtaskCard(Task subtask) {
     final isDone = subtask.status.toLowerCase() == 'done' || 
                    subtask.status.toLowerCase() == 'closed' ||
                    subtask.status.toLowerCase() == 'resolved';
@@ -4265,9 +5354,33 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
           color: isDone ? Colors.grey[400] : Colors.grey[600],
         ),
         onTap: () {
-          // TODO: Navigate to Jira subtask detail page
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Opening ${subtask.key} - Coming soon!')),
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => TaskDetailPage(
+                task: subtask,
+                project: widget.project,
+                onTaskUpdated: (updatedSubtask) {
+                  setState(() {
+                    final updatedSubtasks = _task.subtasks.map((s) {
+                      if (s.id == subtask.id) {
+                        return updatedSubtask;
+                      }
+                      return s;
+                    }).toList();
+                    _task = _task.copyWith(subtasks: updatedSubtasks);
+                  });
+                  widget.onTaskUpdated?.call(_task);
+                },
+                onTaskDeleted: (deletedSubtask) {
+                  setState(() {
+                    final updatedSubtasks = _task.subtasks.where((s) => s.id != deletedSubtask.id).toList();
+                    _task = _task.copyWith(subtasks: updatedSubtasks);
+                  });
+                  widget.onTaskUpdated?.call(_task);
+                },
+                onAddToSchedule: widget.onAddToSchedule,
+              ),
+            ),
           );
         },
       ),
@@ -4319,13 +5432,22 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_issue.key),
-        backgroundColor: Colors.blue[600],
-        foregroundColor: Colors.white,
-        actions: [
-          if (_isLoading)
+          return Scaffold(
+        backgroundColor: const Color(0xFF121212),
+        appBar: AppBar(
+          title: Text(isJiraTask ? _task.key : 'Task'),
+          backgroundColor: widget.project.color,
+          foregroundColor: Colors.white,
+                    actions: [
+            if (!isJiraTask)
+              IconButton(
+                onPressed: _toggleCompletion,
+                icon: Icon(
+                  _task.isCompleted ? Icons.radio_button_unchecked : Icons.check_circle,
+                ),
+                tooltip: _task.isCompleted ? 'Mark as incomplete' : 'Mark as complete',
+              ),
+            if (_isLoading)
             const Padding(
               padding: EdgeInsets.all(16),
               child: SizedBox(
@@ -4371,7 +5493,7 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
-                          _issue.key,
+                          _task.key,
                           style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             color: Colors.blue,
@@ -4379,17 +5501,17 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
                         ),
                       ),
                       const Spacer(),
-                      if (_issue.priority != null)
+                      if (_task.priority != null)
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            color: _getPriorityColor(_issue.priority!).withOpacity(0.1),
+                            color: _getPriorityColorFromString(_task.priority).withOpacity(0.1),
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
-                            _issue.priority!,
+                            _getPriorityTextFromString(_task.priority),
                             style: TextStyle(
-                              color: _getPriorityColor(_issue.priority!),
+                              color: _getPriorityColorFromString(_task.priority),
                               fontWeight: FontWeight.w500,
                             ),
                           ),
@@ -4398,7 +5520,7 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    _issue.summary,
+                    _task.title,
                     style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
@@ -4410,25 +5532,25 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: _getStatusColor(_issue.status).withOpacity(0.1),
+                          color: _getStatusColor(_task.status).withOpacity(0.1),
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
-                          _issue.status,
+                          _task.status,
                           style: TextStyle(
-                            color: _getStatusColor(_issue.status),
+                            color: _getStatusColor(_task.status),
                             fontWeight: FontWeight.w500,
                           ),
                         ),
                       ),
-                      if (_issue.assignee != null) ...[
+                      if (_task.assignee != null) ...[
                         const SizedBox(width: 12),
                         Row(
                           children: [
                             Icon(Icons.person, size: 16, color: Colors.grey[600]),
                             const SizedBox(width: 4),
                             Text(
-                              _issue.assignee!,
+                              _task.assignee!,
                               style: TextStyle(color: Colors.grey[600]),
                             ),
                           ],
@@ -4443,7 +5565,7 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
             const SizedBox(height: 20),
             
             // Issue Description
-            if (_issue.description != null && _issue.description!.isNotEmpty) ...[
+            if (_task.description != null && _task.description!.isNotEmpty) ...[
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
@@ -4471,7 +5593,7 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      _issue.description!,
+                      _task.description!,
                       style: const TextStyle(
                         fontSize: 16,
                         height: 1.5,
@@ -4514,7 +5636,7 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
                     children: [
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: _editJiraIssue,
+                          onPressed: _editTask,
                           icon: const Icon(Icons.edit),
                           label: const Text('Edit Issue'),
                           style: ElevatedButton.styleFrom(
@@ -4564,7 +5686,7 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: _deleteJiraIssue,
+                          onPressed: _deleteTask,
                           icon: const Icon(Icons.delete),
                           label: const Text('Delete Issue'),
                           style: ElevatedButton.styleFrom(
@@ -4579,8 +5701,21 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
+                      onPressed: () => widget.onAddToSchedule?.call(_convertJiraIssueToTask(_task), widget.project),
+                      icon: const Icon(Icons.schedule),
+                      label: const Text('Add to Schedule'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
                       onPressed: widget.project.projectSummary != null && widget.project.projectSummary!.isNotEmpty && !_isExpandingTask
-                        ? _expandJiraIssueWithAI
+                        ? _expandTaskWithAI
                         : null,
                       icon: _isExpandingTask
                         ? const SizedBox(
@@ -4608,7 +5743,7 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
             const SizedBox(height: 20),
             
             // Subtasks Section
-            if (_issue.subtasks.isNotEmpty || !_issue.isSubtask) ...[
+            if (_task.subtasks.isNotEmpty || !_task.isSubtask) ...[
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
@@ -4631,13 +5766,13 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          'Subtasks (${_issue.subtasks.length})',
+                          'Subtasks (${_task.subtasks.length})',
                           style: const TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        if (!_issue.isSubtask)
+                        if (!_task.isSubtask)
                           ElevatedButton.icon(
                             onPressed: _isLoading ? null : _showAddSubtaskDialog,
                             icon: const Icon(Icons.add, size: 16),
@@ -4650,7 +5785,7 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
                           ),
                       ],
                     ),
-                    if (_issue.subtasks.isEmpty && !_issue.isSubtask) ...[
+                    if (_task.subtasks.isEmpty && !_task.isSubtask) ...[
                       const SizedBox(height: 16),
                       Center(
                         child: Column(
@@ -4671,9 +5806,9 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
                           ],
                         ),
                       ),
-                    ] else if (_issue.subtasks.isNotEmpty) ...[
+                    ] else if (_task.subtasks.isNotEmpty) ...[
                       const SizedBox(height: 12),
-                      ..._issue.subtasks.map((subtask) => _buildSubtaskCard(subtask)),
+                                              ..._task.subtasks.map((subtask) => _buildSubtaskCard(subtask)),
                     ],
                   ],
                 ),
@@ -4702,11 +5837,11 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  if (_issue.created != null)
-                    _buildDetailRow('Created', _formatDate(_issue.created!)),
-                  if (_issue.updated != null)
-                    _buildDetailRow('Updated', _formatDate(_issue.updated!)),
-                  _buildDetailRow('Project', widget.projectName),
+                  if (_task.createdAt != null)
+                    _buildDetailRow('Created', _formatDate(_task.createdAt!)),
+                  if (_task.updated != null)
+                    _buildDetailRow('Updated', _formatDate(_task.updated!)),
+                                      _buildDetailRow('Project', widget.projectName ?? widget.project.name),
                 ],
               ),
             ),
@@ -4778,656 +5913,40 @@ class _JiraIssueDetailPageState extends State<JiraIssueDetailPage> {
   String _formatDate(DateTime date) {
     return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
   }
-}
 
-class EditSubtaskDialog extends StatefulWidget {
-  final Task subtask;
-  final Function(Task) onSubtaskUpdated;
-
-  const EditSubtaskDialog({
-    super.key,
-    required this.subtask,
-    required this.onSubtaskUpdated,
-  });
-
-  @override
-  State<EditSubtaskDialog> createState() => _EditSubtaskDialogState();
-}
-
-class _EditSubtaskDialogState extends State<EditSubtaskDialog> {
-  late TextEditingController _titleController;
-  late TextEditingController _descriptionController;
-  late Priority _selectedPriority;
-
-  @override
-  void initState() {
-    super.initState();
-    _titleController = TextEditingController(text: widget.subtask.title);
-    _descriptionController = TextEditingController(text: widget.subtask.description);
-    _selectedPriority = widget.subtask.priority;
-  }
-
-  @override
-  void dispose() {
-    _titleController.dispose();
-    _descriptionController.dispose();
-    super.dispose();
-  }
-
-  void _saveSubtask() {
-    if (_titleController.text.trim().isEmpty) return;
-
-    final updatedSubtask = widget.subtask.copyWith(
-      title: _titleController.text.trim(),
-      description: _descriptionController.text.trim(),
-      priority: _selectedPriority,
-    );
-
-    widget.onSubtaskUpdated(updatedSubtask);
-    Navigator.of(context).pop();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Edit Subtask'),
-      content: SizedBox(
-        width: 400,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _titleController,
-              decoration: const InputDecoration(
-                labelText: 'Subtask Title',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _descriptionController,
-              decoration: const InputDecoration(
-                labelText: 'Description',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 3,
-            ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<Priority>(
-              value: _selectedPriority,
-              decoration: const InputDecoration(
-                labelText: 'Priority',
-                border: OutlineInputBorder(),
-              ),
-              items: Priority.values.map((priority) {
-                return DropdownMenuItem(
-                  value: priority,
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 12,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          color: _getPriorityColor(priority),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(_getPriorityText(priority)),
-                    ],
-                  ),
-                );
-              }).toList(),
-              onChanged: (priority) {
-                if (priority != null) {
-                  setState(() {
-                    _selectedPriority = priority;
-                  });
-                }
-              },
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: _saveSubtask,
-          child: const Text('Save Changes'),
-        ),
-      ],
-    );
-  }
-
-  Color _getPriorityColor(Priority priority) {
-    switch (priority) {
-      case Priority.low:
-        return Colors.green;
-      case Priority.medium:
-        return Colors.orange;
-      case Priority.high:
-        return Colors.red;
-      case Priority.critical:
-        return Colors.purple;
+  Task _convertJiraIssueToTask(Task issue) {
+    // Convert Jira priority to our Priority enum
+    Priority priority;
+    switch (issue.priority?.toLowerCase()) {
+      case 'highest':
+      case 'critical':
+        priority = Priority.critical;
+        break;
+      case 'high':
+        priority = Priority.high;
+        break;
+      case 'medium':
+        priority = Priority.medium;
+        break;
+      case 'lowest':
+      case 'low':
+        priority = Priority.low;
+        break;
+      default:
+        priority = Priority.medium;
     }
-  }
 
-  String _getPriorityText(Priority priority) {
-    switch (priority) {
-      case Priority.low:
-        return 'Low';
-      case Priority.medium:
-        return 'Medium';
-      case Priority.high:
-        return 'High';
-      case Priority.critical:
-        return 'Critical';
-    }
-  }
-}
-
-class SubtaskDetailPage extends StatefulWidget {
-  final Task subtask;
-  final Project project;
-  final Task parentTask;
-  final Function(Task) onSubtaskUpdated;
-  final Function(Task)? onSubtaskDeleted;
-
-  const SubtaskDetailPage({
-    super.key,
-    required this.subtask,
-    required this.project,
-    required this.parentTask,
-    required this.onSubtaskUpdated,
-    this.onSubtaskDeleted,
-  });
-
-  @override
-  State<SubtaskDetailPage> createState() => _SubtaskDetailPageState();
-}
-
-class _SubtaskDetailPageState extends State<SubtaskDetailPage> {
-  late Task _subtask;
-
-  @override
-  void initState() {
-    super.initState();
-    _subtask = widget.subtask;
-  }
-
-  void _toggleCompletion() {
-    setState(() {
-      _subtask = _subtask.copyWith(isCompleted: !_subtask.isCompleted);
-    });
-    widget.onSubtaskUpdated(_subtask);
-  }
-
-  void _editSubtask() {
-    showDialog(
-      context: context,
-      builder: (context) => EditSubtaskDialog(
-        subtask: _subtask,
-        onSubtaskUpdated: (updatedSubtask) {
-          setState(() {
-            _subtask = updatedSubtask;
-          });
-          widget.onSubtaskUpdated(_subtask);
-        },
-      ),
-    );
-  }
-
-  void _deleteSubtask() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Subtask'),
-        content: Text('Are you sure you want to delete "${_subtask.title}"? This action cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop(); // Close dialog
-              Navigator.of(context).pop(); // Go back to task view
-              // Signal deletion by calling the callback with a special flag
-              widget.onSubtaskDeleted?.call(_subtask);
-            },
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showComingSoonMessage(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$feature - Coming Soon!'),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF121212),
-      appBar: AppBar(
-        title: const Text('Subtask Details'),
-        backgroundColor: widget.project.color,
-        foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            onPressed: _toggleCompletion,
-            icon: Icon(
-              _subtask.isCompleted ? Icons.radio_button_unchecked : Icons.check_circle,
-            ),
-            tooltip: _subtask.isCompleted ? 'Mark as incomplete' : 'Mark as complete',
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Subtask Header Card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.green.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Icon(
-                            Icons.subdirectory_arrow_right,
-                            color: Colors.green,
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            _subtask.title,
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              decoration: _subtask.isCompleted ? TextDecoration.lineThrough : null,
-                              color: _subtask.isCompleted ? Colors.grey[600] : null,
-                            ),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: _subtask.isCompleted ? Colors.green : Colors.grey[300],
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            _subtask.isCompleted ? 'COMPLETED' : 'PENDING',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: _subtask.isCompleted ? Colors.white : Colors.grey[700],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (_subtask.description.isNotEmpty) ...[
-                      const SizedBox(height: 16),
-                      Text(
-                        'Description',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey[800],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _subtask.description,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey[700],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-            
-            const SizedBox(height: 16),
-            
-            // Action Buttons Card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Actions',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey[800],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: _editSubtask,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: widget.project.color,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                            ),
-                            icon: const Icon(Icons.edit, size: 18),
-                            label: const Text('Edit Subtask'),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: () => _showComingSoonMessage('Add Comment'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.blue,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                            ),
-                            icon: const Icon(Icons.comment, size: 18),
-                            label: const Text('Add Comment'),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _deleteSubtask,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                        ),
-                        icon: const Icon(Icons.delete, size: 18),
-                        label: const Text('Delete Subtask'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            
-            const SizedBox(height: 16),
-            
-            // Subtask Details Card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Subtask Details',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey[800],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _buildDetailRow('Priority', _getPriorityText(_subtask.priority)),
-                    _buildDetailRow('Parent Task', widget.parentTask.title),
-                    _buildDetailRow('Project', widget.project.name),
-                    _buildDetailRow('Created', _formatDate(_subtask.createdAt)),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 80,
-            child: Text(
-              '$label:',
-              style: TextStyle(
-                fontWeight: FontWeight.w500,
-                color: Colors.grey[600],
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(value),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _getPriorityText(Priority priority) {
-    switch (priority) {
-      case Priority.low:
-        return 'Low';
-      case Priority.medium:
-        return 'Medium';
-      case Priority.high:
-        return 'High';
-      case Priority.critical:
-        return 'Critical';
-    }
-  }
-
-  String _formatDate(DateTime date) {
-    return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
-  }
-}
-
-class AddJiraTaskDialog extends StatefulWidget {
-  final Project project;
-  final Function(Task) onTaskCreated;
-
-  const AddJiraTaskDialog({
-    super.key,
-    required this.project,
-    required this.onTaskCreated,
-  });
-
-  @override
-  State<AddJiraTaskDialog> createState() => _AddJiraTaskDialogState();
-}
-
-class _AddJiraTaskDialogState extends State<AddJiraTaskDialog> {
-  final _titleController = TextEditingController();
-  final _descriptionController = TextEditingController();
-  Priority _selectedPriority = Priority.medium;
-
-  @override
-  void dispose() {
-    _titleController.dispose();
-    _descriptionController.dispose();
-    super.dispose();
-  }
-
-  void _createTask() {
-    if (_titleController.text.trim().isEmpty) return;
-
-    final task = Task(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      title: _titleController.text.trim(),
-      description: _descriptionController.text.trim(),
+    return Task(
+      id: 'jira_${issue.key}',
+      key: issue.key,
+      title: issue.title,
+      description: issue.description ?? '',
       projectId: widget.project.id,
-      createdAt: DateTime.now(),
-      priority: _selectedPriority,
+      createdAt: issue.createdAt ?? DateTime.now(),
+      status: issue.status,
+      jiraTicketId: issue.key,
+      priorityEnum: priority,
     );
-
-    widget.onTaskCreated(task);
-    Navigator.of(context).pop();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Row(
-        children: [
-          Icon(Icons.link, color: widget.project.color),
-          const SizedBox(width: 8),
-          const Text('Create Jira Task'),
-        ],
-      ),
-      content: SizedBox(
-        width: 400,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.blue[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.blue[200]!),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.info, color: Colors.blue[600], size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'This will create a task in Jira project ${widget.project.extractedJiraProjectKey}',
-                      style: TextStyle(
-                        color: Colors.blue[700],
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _titleController,
-              decoration: const InputDecoration(
-                labelText: 'Task Summary',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 1,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _descriptionController,
-              decoration: const InputDecoration(
-                labelText: 'Description',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 3,
-            ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<Priority>(
-              value: _selectedPriority,
-              decoration: const InputDecoration(
-                labelText: 'Priority',
-                border: OutlineInputBorder(),
-              ),
-              items: Priority.values.map((priority) {
-                return DropdownMenuItem(
-                  value: priority,
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 12,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          color: _getPriorityColor(priority),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(_getPriorityText(priority)),
-                    ],
-                  ),
-                );
-              }).toList(),
-              onChanged: (priority) {
-                if (priority != null) {
-                  setState(() {
-                    _selectedPriority = priority;
-                  });
-                }
-              },
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: _createTask,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: widget.project.color,
-            foregroundColor: Colors.white,
-          ),
-          child: const Text('Create in Jira'),
-        ),
-      ],
-    );
-  }
-
-  Color _getPriorityColor(Priority priority) {
-    switch (priority) {
-      case Priority.low:
-        return Colors.green;
-      case Priority.medium:
-        return Colors.orange;
-      case Priority.high:
-        return Colors.red;
-      case Priority.critical:
-        return Colors.purple;
-    }
-  }
-
-  String _getPriorityText(Priority priority) {
-    switch (priority) {
-      case Priority.low:
-        return 'Low';
-      case Priority.medium:
-        return 'Medium';
-      case Priority.high:
-        return 'High';
-      case Priority.critical:
-        return 'Critical';
-    }
   }
 }
 
@@ -5455,7 +5974,7 @@ class _EditTaskDialogState extends State<EditTaskDialog> {
     super.initState();
     _titleController = TextEditingController(text: widget.task.title);
     _descriptionController = TextEditingController(text: widget.task.description);
-    _selectedPriority = widget.task.priority;
+    _selectedPriority = widget.task.priorityEnum;
   }
 
   @override
@@ -5471,7 +5990,7 @@ class _EditTaskDialogState extends State<EditTaskDialog> {
     final updatedTask = widget.task.copyWith(
       title: _titleController.text.trim(),
       description: _descriptionController.text.trim(),
-      priority: _selectedPriority,
+      priorityEnum: _selectedPriority,
     );
 
     widget.onTaskUpdated(updatedTask);
@@ -5580,694 +6099,86 @@ class _EditTaskDialogState extends State<EditTaskDialog> {
   }
 }
 
-class LocalTaskDetailPage extends StatefulWidget {
-  final Task task;
-  final Project project;
-  final Function(Task) onTaskUpdated;
-  final Function(Task)? onTaskDeleted;
-
-  const LocalTaskDetailPage({
-    super.key,
-    required this.task,
-    required this.project,
-    required this.onTaskUpdated,
-    this.onTaskDeleted,
-  });
-
-  @override
-  State<LocalTaskDetailPage> createState() => _LocalTaskDetailPageState();
+// Helper functions for priority handling
+Color _getPriorityColorFromString(String? priority) {
+  if (priority == null) return Colors.grey;
+  switch (priority.toLowerCase()) {
+    case 'low':
+    case 'lowest':
+      return Colors.green;
+    case 'medium':
+      return Colors.orange;
+    case 'high':
+      return Colors.red;
+    case 'critical':
+    case 'highest':
+      return Colors.purple;
+    default:
+      return Colors.grey;
+  }
 }
 
-class _LocalTaskDetailPageState extends State<LocalTaskDetailPage> {
-  late Task _task;
-  bool _isExpandingTask = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _task = widget.task;
+String _getPriorityTextFromString(String? priority) {
+  if (priority == null) return 'Medium';
+  switch (priority.toLowerCase()) {
+    case 'low':
+    case 'lowest':
+      return 'Low';
+    case 'medium':
+      return 'Medium';
+    case 'high':
+      return 'High';
+    case 'critical':
+    case 'highest':
+      return 'Critical';
+    default:
+      return 'Medium';
   }
+}
 
-  void _toggleCompletion() {
-    setState(() {
-      _task = _task.copyWith(isCompleted: !_task.isCompleted);
-    });
-    widget.onTaskUpdated(_task);
+
+
+Color _getPriorityColorFromEnum(Priority priority) {
+  switch (priority) {
+    case Priority.low:
+      return Colors.green;
+    case Priority.medium:
+      return Colors.orange;
+    case Priority.high:
+      return Colors.red;
+    case Priority.critical:
+      return Colors.purple;
   }
+}
 
-  void _editTask() {
-    showDialog(
-      context: context,
-      builder: (context) => EditTaskDialog(
-        task: _task,
-        onTaskUpdated: (updatedTask) {
-          setState(() {
-            _task = updatedTask;
-          });
-          widget.onTaskUpdated(_task);
-        },
-      ),
-    );
+String _getPriorityTextFromEnum(Priority priority) {
+  switch (priority) {
+    case Priority.low:
+      return 'Low';
+    case Priority.medium:
+      return 'Medium';
+    case Priority.high:
+      return 'High';
+    case Priority.critical:
+      return 'Critical';
   }
+}
 
-  void _deleteTask() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Task'),
-        content: Text('Are you sure you want to delete "${_task.title}"? This action cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop(); // Close dialog
-              Navigator.of(context).pop(); // Go back to project view
-              // Signal deletion by calling the callback with a special flag
-              // We'll modify the onTaskUpdated signature to handle deletion
-              widget.onTaskDeleted?.call(_task);
-            },
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showComingSoonMessage(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$feature - Coming Soon!'),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  Future<void> _expandTaskWithAI() async {
-    if (widget.project.projectSummary == null || widget.project.projectSummary!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Project summary is required for AI Expand. Please add a project summary in project settings.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      return;
-    }
-
-    setState(() {
-      _isExpandingTask = true;
-    });
-
-    try {
-      final aiService = AIExpandService();
-      final subtaskItems = await aiService.expandTask(
-        taskDescription: _task.description.isNotEmpty ? _task.description : _task.title,
-        projectSummary: widget.project.projectSummary!,
-        isDevelopmentProject: widget.project.type == ProjectType.development,
-        techStack: widget.project.techStack,
-      );
-
-      if (mounted) {
-        // Create actual local subtasks from AI subtask items
-        final List<Task> newSubtasks = [];
-        
-        for (final item in subtaskItems) {
-          final subtask = Task(
-            id: DateTime.now().millisecondsSinceEpoch.toString() + '_${item.id}',
-            title: item.title,
-            description: item.prompt,
-            projectId: widget.project.id,
-            createdAt: DateTime.now(),
-            priority: Priority.medium,
-            parentTaskId: _task.id,
-            isSubtask: true,
-          );
-          newSubtasks.add(subtask);
-          print('Created local subtask: ${subtask.title}');
-        }
-        
-        // Update the current task with the new subtasks
-        setState(() {
-          _task = _task.copyWith(subtasks: [..._task.subtasks, ...newSubtasks]);
-        });
-        widget.onTaskUpdated(_task);
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Successfully created ${newSubtasks.length} AI-generated subtasks!'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.green,
-          ),
-        );
-        
-        // Show subtasks dialog
-        _showSubtasksDialog(newSubtasks);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error expanding task: ${e.toString()}'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isExpandingTask = false;
-        });
-      }
-    }
-  }
-
-  void _showSubtasksDialog(List<Task> subtasks) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.auto_awesome, color: Colors.purple),
-            const SizedBox(width: 8),
-            const Text('AI Expanded Subtasks'),
-          ],
-        ),
-        content: SizedBox(
-          width: 500,
-          height: 400,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Created ${subtasks.length} subtasks:',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: subtasks.length,
-                  itemBuilder: (context, index) {
-                    final subtask = subtasks[index];
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              subtask.title,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              subtask.description,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).pop(); // Go back to project view
-            },
-            child: const Text('View in Project'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF121212),
-      appBar: AppBar(
-        title: Text('Local Task'),
-        backgroundColor: widget.project.color,
-        foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            onPressed: _toggleCompletion,
-            icon: Icon(
-              _task.isCompleted ? Icons.radio_button_unchecked : Icons.check_circle,
-            ),
-            tooltip: _task.isCompleted ? 'Mark as incomplete' : 'Mark as complete',
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Task Header Card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: widget.project.color.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Icon(
-                            Icons.task_alt,
-                            color: widget.project.color,
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            _task.title,
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              decoration: _task.isCompleted ? TextDecoration.lineThrough : null,
-                              color: _task.isCompleted ? Colors.grey[600] : null,
-                            ),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: _task.isCompleted ? Colors.green : Colors.grey[300],
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            _task.isCompleted ? 'COMPLETED' : 'PENDING',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: _task.isCompleted ? Colors.white : Colors.grey[700],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (_task.description.isNotEmpty) ...[
-                      const SizedBox(height: 16),
-                      Text(
-                        'Description',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey[800],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _task.description,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey[700],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-            
-            const SizedBox(height: 16),
-            
-            // Action Buttons Card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Actions',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey[800],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: _editTask,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: widget.project.color,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                            ),
-                            icon: const Icon(Icons.edit, size: 18),
-                            label: const Text('Edit Task'),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: () => _showComingSoonMessage('Add Comment'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.blue,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                            ),
-                            icon: const Icon(Icons.comment, size: 18),
-                            label: const Text('Add Comment'),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _deleteTask,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                        ),
-                        icon: const Icon(Icons.delete, size: 18),
-                        label: const Text('Delete Task'),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: widget.project.projectSummary != null && widget.project.projectSummary!.isNotEmpty && !_isExpandingTask
-                          ? () => _expandTaskWithAI()
-                          : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.purple,
-                          foregroundColor: Colors.white,
-                          disabledBackgroundColor: Colors.grey[300],
-                          disabledForegroundColor: Colors.grey[600],
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                        ),
-                        icon: _isExpandingTask
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                              ),
-                            )
-                          : const Icon(Icons.auto_awesome, size: 18),
-                        label: Text(_isExpandingTask ? 'Expanding...' : 'AI Expand'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            
-            const SizedBox(height: 16),
-            
-            // Subtasks Section
-            if (_task.subtasks.isNotEmpty || !_task.isSubtask) ...[
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'Subtasks (${_task.subtasks.length})',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey[800],
-                            ),
-                          ),
-                          if (!_task.isSubtask)
-                            ElevatedButton.icon(
-                              onPressed: () => _showComingSoonMessage('Add Subtask'),
-                              icon: const Icon(Icons.add, size: 16),
-                              label: const Text('Add Subtask'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                              ),
-                            ),
-                        ],
-                      ),
-                      if (_task.subtasks.isEmpty && !_task.isSubtask) ...[
-                        const SizedBox(height: 16),
-                        Center(
-                          child: Column(
-                            children: [
-                              Icon(
-                                Icons.subdirectory_arrow_right,
-                                size: 32,
-                                color: Colors.grey[400],
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'No subtasks yet',
-                                style: TextStyle(
-                                  color: Colors.grey[600],
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ] else if (_task.subtasks.isNotEmpty) ...[
-                        const SizedBox(height: 12),
-                        ..._task.subtasks.map((subtask) => _buildSubtaskCard(subtask)),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              
-              const SizedBox(height: 16),
-            ],
-            
-            // Task Details Card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Task Details',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey[800],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _buildDetailRow('Priority', _getPriorityText(_task.priority)),
-                    _buildDetailRow('Project', widget.project.name),
-                    _buildDetailRow('Created', _formatDate(_task.createdAt)),
-                    if (_task.jiraTicketId != null)
-                      _buildDetailRow('Jira Ticket', _task.jiraTicketId!),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 80,
-            child: Text(
-              '$label:',
-              style: TextStyle(
-                fontWeight: FontWeight.w500,
-                color: Colors.grey[600],
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(value),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _getPriorityText(Priority priority) {
-    switch (priority) {
-      case Priority.low:
-        return 'Low';
-      case Priority.medium:
-        return 'Medium';
-      case Priority.high:
-        return 'High';
-      case Priority.critical:
-        return 'Critical';
-    }
-  }
-
-  String _formatDate(DateTime date) {
-    return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
-  }
-
-  Widget _buildSubtaskCard(Task subtask) {
-    final isDone = subtask.isCompleted;
-    
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      color: isDone ? Colors.grey[100] : null,
-      child: ListTile(
-        leading: Container(
-          padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(
-            color: isDone ? Colors.grey[300] : Colors.green[100],
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Icon(
-            Icons.subdirectory_arrow_right,
-            color: isDone ? Colors.grey[600] : Colors.green[700],
-            size: 14,
-          ),
-        ),
-        title: Text(
-          subtask.title,
-          style: TextStyle(
-            fontWeight: FontWeight.w500,
-            color: isDone ? Colors.grey[600] : null,
-            decoration: isDone ? TextDecoration.lineThrough : null,
-            fontSize: 14,
-          ),
-        ),
-        subtitle: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: _getPriorityColor(subtask.priority).withOpacity(isDone ? 0.3 : 0.1),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                _getPriorityText(subtask.priority),
-                style: TextStyle(
-                  fontSize: 9,
-                  color: isDone 
-                    ? _getPriorityColor(subtask.priority).withOpacity(0.7)
-                    : _getPriorityColor(subtask.priority),
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: isDone 
-                  ? Colors.green
-                  : Colors.grey[200],
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                isDone ? 'COMPLETED' : 'PENDING',
-                style: TextStyle(
-                  fontSize: 9,
-                  color: isDone 
-                    ? Colors.white
-                    : Colors.grey[600],
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ],
-        ),
-        trailing: Icon(
-          Icons.arrow_forward_ios,
-          size: 14,
-          color: isDone ? Colors.grey[400] : Colors.grey[600],
-        ),
-        onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => SubtaskDetailPage(
-                subtask: subtask,
-                project: widget.project,
-                parentTask: _task,
-                onSubtaskUpdated: (updatedSubtask) {
-                  setState(() {
-                    final updatedSubtasks = _task.subtasks.map((s) {
-                      if (s.id == subtask.id) {
-                        return updatedSubtask;
-                      }
-                      return s;
-                    }).toList();
-                    _task = _task.copyWith(subtasks: updatedSubtasks);
-                  });
-                  widget.onTaskUpdated(_task);
-                },
-                onSubtaskDeleted: (deletedSubtask) {
-                  setState(() {
-                    final updatedSubtasks = _task.subtasks.where((s) => s.id != deletedSubtask.id).toList();
-                    _task = _task.copyWith(subtasks: updatedSubtasks);
-                  });
-                  widget.onTaskUpdated(_task);
-                },
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Color _getPriorityColor(Priority priority) {
-    switch (priority) {
-      case Priority.low:
-        return Colors.green;
-      case Priority.medium:
-        return Colors.orange;
-      case Priority.high:
-        return Colors.red;
-      case Priority.critical:
-        return Colors.purple;
-    }
+Color _getStatusColor(String status) {
+  switch (status.toLowerCase()) {
+    case 'done':
+    case 'closed':
+    case 'resolved':
+      return Colors.green;
+    case 'in progress':
+    case 'in review':
+      return Colors.blue;
+    case 'to do':
+    case 'open':
+      return Colors.grey;
+    case 'blocked':
+      return Colors.red;
+    default:
+      return Colors.grey;
   }
 }
