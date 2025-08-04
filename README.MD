@@ -1,16 +1,47 @@
 # taskmanager
 
-A new Flutter project.
+Taskmanager is a cross-platform Flutter desktop application for managing projects, tasks, and subtasks.
 
-## Getting Started
+## Application Requirements
 
-This project is a starting point for a Flutter application.
+Links
 
-A few resources to get you started if this is your first Flutter project:
+- [Jira Configuration](docs/jira-configuration.md)
+- [AI Setup](docs/ai-setup.md)
+- [Workflow Examples](docs/workflow-examples.md)
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+### Overview
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Cross‑platform Flutter desktop app for managing projects, tasks, and subtasks.
+
+### Core Concepts
+
+- **Projects**: professional or personal, each with summary, tech stack, and color coding.
+- **Tasks**: high‑level work items (local or Jira).
+- **Subtasks**: granular, AI‑digestible units; can be created manually or via AI expansion.
+- **Schedule**: sidebar panel aggregating tasks from all projects.
+
+### AI Features
+
+- **AI Expand** converts a task into subtasks using OpenAI or Claude.
+- Subtasks can be queued for an AI agent (e.g., Codex) to implement within the codebase.
+- Agent receives project summary, subtask prompt, and relevant files.
+
+### Workflow
+
+Morning review → queue subtasks for AI → midday review for feedback → afternoon review for finalization.
+Larger feedback becomes new subtasks; aim to minimize merge conflicts.
+
+### Scheduling
+
+AI‑managed ordering: prioritize blockers and quick wins, start long tasks early.
+Users can add/remove tasks, expand tasks, and mark subtasks for AI directly in the schedule.
+
+### Integration
+
+Jira credentials loaded from api_keys.txt; issues fetched, updated, and deleted via JiraService.
+Local persistence via JSON in the application documents directory.
+
+### Future Extensions
+
+Estimated durations, notifications, multi‑agent collaboration, and rich reporting.
