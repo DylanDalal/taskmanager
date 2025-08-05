@@ -914,100 +914,6 @@ class _DashboardPageState extends State<DashboardPage> with SingleTickerProvider
     );
   }
 
-  Future<void> _expandScheduledTask(ScheduledTask scheduledTask) async {
-    // Find the project associated with this task
-    final allProjects = [..._professionalProjects, ..._personalProjects];
-    final project = allProjects.firstWhere(
-      (p) => p.id == scheduledTask.projectId,
-      orElse: () => Project(
-        id: '',
-        name: '',
-        description: '',
-        type: ProjectType.general,
-        color: Colors.grey,
-        icon: Icons.task,
-        tasks: const [],
-        createdAt: DateTime.now(),
-      ),
-    );
-
-    if (project.id.isEmpty || project.projectSummary == null || project.projectSummary!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Project summary is required for AI Expand. Please add a project summary in project settings.'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    try {
-      final aiService = AIExpandService();
-      final taskDescription = scheduledTask.task.description?.isNotEmpty == true
-          ? scheduledTask.task.description!
-          : scheduledTask.task.title;
-
-      final subtaskItems = await aiService.expandTask(
-        taskDescription: taskDescription,
-        projectSummary: project.projectSummary!,
-        isDevelopmentProject: project.type == ProjectType.development,
-        techStack: project.techStack,
-      );
-
-      setState(() {
-        for (final item in subtaskItems) {
-          final subtaskId = '${DateTime.now().millisecondsSinceEpoch}_${item.id}';
-          final subtask = Task(
-            id: subtaskId,
-            key: subtaskId,
-            title: item.title,
-            description: item.prompt,
-            projectId: scheduledTask.projectId,
-            createdAt: DateTime.now(),
-            status: 'To Do',
-            priorityEnum: Priority.medium,
-            parentKey: scheduledTask.task.key,
-            isSubtask: true,
-          );
-
-          _scheduledTasks.add(
-            ScheduledTask(
-              id: 'expanded_${subtaskId}',
-              task: subtask,
-              projectId: scheduledTask.projectId,
-              projectName: scheduledTask.projectName,
-              projectColor: scheduledTask.projectColor,
-              scheduledAt: DateTime.now(),
-              dueDate: scheduledTask.dueDate,
-            ),
-          );
-        }
-
-        // Sort by priority after adding
-        _scheduledTasks.sort(
-          (a, b) => _comparePriority(a.task.priorityEnum, b.task.priorityEnum),
-        );
-      });
-
-      _saveScheduledTasks();
-      _notifyScheduleUpdate();
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Added ${subtaskItems.length} subtasks to schedule'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error expanding task: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
   Future<void> _fetchAndScheduleAssignedIssues() async {
     print('Fetching assigned Jira issues from all projects...');
     
@@ -2777,27 +2683,6 @@ class _SharedSchedulePanelState extends State<SharedSchedulePanel> {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      if (!isSubtask) ...[
-                        MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          child: GestureDetector(
-                            onTap: () => _expandScheduledTask(scheduledTask),
-                            child: Container(
-                              padding: const EdgeInsets.all(2),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(4),
-                                color: isHovered ? Colors.purple.withOpacity(0.1) : Colors.transparent,
-                              ),
-                              child: Icon(
-                                Icons.auto_awesome,
-                                size: 16,
-                                color: isHovered ? Colors.purple[700] : Colors.grey[600],
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                      ],
                       MouseRegion(
                         cursor: SystemMouseCursors.click,
                         child: GestureDetector(
