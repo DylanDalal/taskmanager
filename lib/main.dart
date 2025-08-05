@@ -1120,9 +1120,158 @@ class _TaskManagerAppState extends State<TaskManagerApp> with SingleTickerProvid
       final item = _scheduledTasks.removeAt(oldIndex);
       _scheduledTasks.insert(newIndex, item);
     });
-    
+
     _saveScheduledTasks();
     _notifyScheduleUpdate();
+  }
+
+  Future<void> _expandScheduledTaskWithAI(
+      BuildContext context, ScheduledTask scheduledTask) async {
+    final project = [..._professionalProjects, ..._personalProjects]
+        .firstWhere((p) => p.id == scheduledTask.projectId);
+
+    if (project.projectSummary == null || project.projectSummary!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Project summary is required for AI Expand. Please add a project summary in project settings.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    try {
+      final aiService = AIExpandService();
+      final taskDescription = scheduledTask.task.description?.isNotEmpty == true
+          ? scheduledTask.task.description!
+          : scheduledTask.task.title;
+
+      final subtaskItems = await aiService.expandTask(
+        taskDescription: taskDescription,
+        projectSummary: project.projectSummary!,
+        isDevelopmentProject: project.type == ProjectType.development,
+        techStack: project.techStack,
+      );
+
+      final List<Task> newSubtasks = [];
+      final parentIndex =
+          _scheduledTasks.indexWhere((st) => st.id == scheduledTask.id);
+      int insertIndex = parentIndex + 1;
+
+      for (final item in subtaskItems) {
+        final uniqueId =
+            DateTime.now().millisecondsSinceEpoch.toString() + '_${item.id}';
+        final subtask = Task(
+          id: uniqueId,
+          key: uniqueId,
+          title: item.title,
+          description: item.prompt,
+          projectId: project.id,
+          createdAt: DateTime.now(),
+          status: 'To Do',
+          priorityEnum: Priority.medium,
+          parentKey: scheduledTask.task.key,
+          isSubtask: true,
+        );
+        newSubtasks.add(subtask);
+
+        final scheduledSubtask = ScheduledTask(
+          id: uniqueId,
+          task: subtask,
+          projectId: project.id,
+          projectName: project.name,
+          projectColor: project.color,
+          scheduledAt: DateTime.now(),
+        );
+        _scheduledTasks.insert(insertIndex, scheduledSubtask);
+        insertIndex++;
+      }
+
+      setState(() {});
+      await _saveScheduledTasks();
+      _notifyScheduleUpdate();
+
+      _showScheduleSubtasksDialog(context, newSubtasks);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error expanding task: $e'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _showScheduleSubtasksDialog(
+      BuildContext context, List<Task> subtasks) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.auto_awesome, color: Colors.purple),
+            const SizedBox(width: 8),
+            const Text('AI Expanded Subtasks'),
+          ],
+        ),
+        content: SizedBox(
+          width: 500,
+          height: 400,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Created ${subtasks.length} subtasks:',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: subtasks.length,
+                  itemBuilder: (context, index) {
+                    final subtask = subtasks[index];
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              subtask.title,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              subtask.description ?? '',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _registerScheduleUpdate(Function() callback) {
@@ -1283,6 +1432,7 @@ class _TaskManagerAppState extends State<TaskManagerApp> with SingleTickerProvid
         onDeleteProject: _deleteProject,
         onAddTaskToSchedule: _addTaskToSchedule,
         onRemoveTaskFromSchedule: _removeTaskFromSchedule,
+        onExpandScheduledTask: _expandScheduledTaskWithAI,
         onReorderScheduledTasks: _reorderScheduledTasks,
         onRegisterScheduleUpdate: _registerScheduleUpdate,
         onUnregisterScheduleUpdate: _unregisterScheduleUpdate,
@@ -1308,6 +1458,7 @@ class MainLayout extends StatefulWidget {
   final Function(String) onDeleteProject;
   final Function(Task, Project) onAddTaskToSchedule;
   final Function(ScheduledTask) onRemoveTaskFromSchedule;
+  final Future<void> Function(BuildContext, ScheduledTask) onExpandScheduledTask;
   final Function(int, int) onReorderScheduledTasks;
   final Function(Function()) onRegisterScheduleUpdate;
   final Function(Function()) onUnregisterScheduleUpdate;
@@ -1330,6 +1481,7 @@ class MainLayout extends StatefulWidget {
     required this.onDeleteProject,
     required this.onAddTaskToSchedule,
     required this.onRemoveTaskFromSchedule,
+    required this.onExpandScheduledTask,
     required this.onReorderScheduledTasks,
     required this.onRegisterScheduleUpdate,
     required this.onUnregisterScheduleUpdate,
@@ -1661,6 +1813,7 @@ class _MainLayoutState extends State<MainLayout> {
             child: SharedSchedulePanel(
               scheduledTasks: widget.scheduledTasks,
               onRemoveTask: widget.onRemoveTaskFromSchedule,
+              onExpandTask: widget.onExpandScheduledTask,
               onReorder: widget.onReorderScheduledTasks,
               onOpenTaskDetail: (scheduledTask) {
                 // Find the project for this task
@@ -2408,6 +2561,7 @@ class SharedSchedulePanel extends StatelessWidget {
   final List<ScheduledTask> scheduledTasks;
   final Function(ScheduledTask) onRemoveTask;
   final Function(ScheduledTask) onOpenTaskDetail;
+  final Future<void> Function(BuildContext, ScheduledTask) onExpandTask;
   final Function(int, int)? onReorder;
 
   const SharedSchedulePanel({
@@ -2415,6 +2569,7 @@ class SharedSchedulePanel extends StatelessWidget {
     required this.scheduledTasks,
     required this.onRemoveTask,
     required this.onOpenTaskDetail,
+    required this.onExpandTask,
     this.onReorder,
   });
 
@@ -2487,7 +2642,9 @@ class SharedSchedulePanel extends StatelessWidget {
                               vertical: 10,
                                                   ),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF2A2A2A),
+                              color: isSubtask
+                                  ? const Color(0xFF262626)
+                                  : const Color(0xFF2A2A2A),
                                                     borderRadius: BorderRadius.circular(8),
                                                   ),
                             child: Row(
@@ -2553,6 +2710,7 @@ class SharedSchedulePanel extends StatelessWidget {
                             isSubtask: isSubtask,
                             onRemoveTask: onRemoveTask,
                             onOpenTaskDetail: onOpenTaskDetail,
+                            onExpandTask: onExpandTask,
                               ),
                             ),
                       );
@@ -2571,6 +2729,7 @@ class _HoverCard extends StatefulWidget {
   final bool isSubtask;
   final Function(ScheduledTask) onRemoveTask;
   final Function(ScheduledTask) onOpenTaskDetail;
+  final Future<void> Function(BuildContext, ScheduledTask) onExpandTask;
 
   const _HoverCard({
     super.key,
@@ -2578,6 +2737,7 @@ class _HoverCard extends StatefulWidget {
     required this.isSubtask,
     required this.onRemoveTask,
     required this.onOpenTaskDetail,
+    required this.onExpandTask,
   });
 
   @override
@@ -2626,8 +2786,8 @@ class _HoverCardState extends State<_HoverCard> {
         transform: isHovered ? (Matrix4.identity()..translate(0.0, -1.0, 0.0)) : Matrix4.identity(),
         child: Card(
           color: isHovered
-              ? const Color(0xFF232323)
-              : const Color(0xFF2A2A2A),
+              ? (isSubtask ? const Color(0xFF1F1F1F) : const Color(0xFF232323))
+              : (isSubtask ? const Color(0xFF262626) : const Color(0xFF2A2A2A)),
           margin: EdgeInsets.zero,
           elevation: isHovered ? 4 : 1,
           child: Padding(
@@ -2717,21 +2877,37 @@ class _HoverCardState extends State<_HoverCard> {
                   ),
                 ),
                 // Trailing remove button - not draggable
+                if (!isSubtask) ...[
+                  Material(
+                    color: Colors.transparent,
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.auto_awesome,
+                        size: 16,
+                        color: Colors.purple[300],
+                      ),
+                      onPressed: () => widget.onExpandTask(context, scheduledTask),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                ],
                 Material(
                   color: Colors.transparent,
-                child: IconButton(
-                  icon: Icon(
+                  child: IconButton(
+                    icon: Icon(
                       Icons.remove_circle_outline,
                       size: isSubtask ? 14 : 16,
                       color: Colors.red[400],
-          ),
+                    ),
                     onPressed: () => widget.onRemoveTask(scheduledTask),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
-                    ),
-                  ],
                 ),
+              ],
+            ),
           ),
         ),
       ),
