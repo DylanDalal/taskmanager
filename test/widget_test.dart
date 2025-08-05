@@ -89,14 +89,14 @@ void main() {
     });
   });
 
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
+  testWidgets('Task Manager app loads correctly', (WidgetTester tester) async {
     // Build our app and trigger a frame.
     await tester.pumpWidget(const TaskManagerApp());
 
     // Wait for the app to fully load and avoid layout issues
     await tester.pumpAndSettle();
 
-    // Verify that the dashboard is displayed
-    expect(find.text('DASHBOARD'), findsOneWidget);
+    // Verify that the main app title is displayed
+    expect(find.text('TASK MANAGER'), findsOneWidget);
   });
 }

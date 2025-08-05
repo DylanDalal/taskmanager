@@ -13,6 +13,7 @@ class Task {
   final String? description;
   final String status;
   final String? assignee;
+  final String? assigneeEmail; // NEW FIELD
   final String? priority;
   final DateTime? createdAt; // This maps to created from Jira
   final DateTime? updated;
@@ -32,6 +33,7 @@ class Task {
     this.description,
     required this.status,
     this.assignee,
+    this.assigneeEmail, // NEW FIELD
     this.priority,
     this.createdAt,
     this.updated,
@@ -69,6 +71,7 @@ class Task {
     bool? isSubtask,
     String? status,
     String? assignee,
+    String? assigneeEmail, // NEW FIELD
     String? priority,
     DateTime? updated,
     String? sprintName,
@@ -82,6 +85,7 @@ class Task {
       description: description ?? this.description,
       status: status ?? (isCompleted != null ? (isCompleted ? 'Done' : 'To Do') : this.status),
       assignee: assignee ?? this.assignee,
+      assigneeEmail: assigneeEmail ?? this.assigneeEmail, // NEW FIELD
       priority: priority ?? this.priority,
       createdAt: createdAt,
       updated: updated ?? this.updated,
@@ -120,6 +124,7 @@ class Task {
       'description': description,
       'status': status,
       'assignee': assignee,
+      'assigneeEmail': assigneeEmail, // NEW FIELD
       'priority': priority,
       'createdAt': createdAt?.millisecondsSinceEpoch,
       'updated': updated?.millisecondsSinceEpoch,
@@ -162,6 +167,7 @@ class Task {
       description: json['description'] as String?,
       status: json['status'] as String? ?? (json['isCompleted'] == true ? 'Done' : 'To Do'),
       assignee: json['assignee'] as String?,
+      assigneeEmail: json['assigneeEmail'] as String?, // NEW FIELD
       priority: json['priority'] as String?,
       createdAt: json['createdAt'] != null ? DateTime.fromMillisecondsSinceEpoch(json['createdAt'] as int) : null,
       updated: json['updated'] != null ? DateTime.fromMillisecondsSinceEpoch(json['updated'] as int) : null,
@@ -291,6 +297,12 @@ class Task {
     // In Jira, tasks can have parents (like being under an Epic) without being subtasks
     final isSubtask = issueType?.toLowerCase() == 'subtask';
     
+    // Extract assignee email if available
+    String? assigneeEmail;
+    if (issue.fields?['assignee'] != null) {
+      assigneeEmail = issue.fields?['assignee']?['emailAddress']?.toString();
+    }
+    
     // Convert Jira priority to our Priority enum
     Priority priorityEnum;
     final jiraPriority = issue.fields?['priority']?['name']?.toString();
@@ -320,6 +332,7 @@ class Task {
       description: _extractTextFromADF(issue.fields?['description']),
       status: issue.fields?['status']?['name']?.toString() ?? 'Unknown',
       assignee: issue.fields?['assignee']?['displayName']?.toString(),
+      assigneeEmail: assigneeEmail, // NEW FIELD
       priority: issue.fields?['priority']?['name']?.toString(),
       createdAt: issue.fields?['created'] != null ? DateTime.tryParse(issue.fields!['created'].toString()) : null,
       updated: issue.fields?['updated'] != null ? DateTime.tryParse(issue.fields!['updated'].toString()) : null,
