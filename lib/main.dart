@@ -914,6 +914,143 @@ class _DashboardPageState extends State<DashboardPage> with SingleTickerProvider
     );
   }
 
+  Future<void> _expandScheduledTaskWithAI(ScheduledTask scheduledTask) async {
+    final project = [..._professionalProjects, ..._personalProjects]
+        .firstWhere((p) => p.id == scheduledTask.projectId, orElse: () => null);
+
+    if (project == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Project not found for this task'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (project.projectSummary == null || project.projectSummary!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Project summary is required for AI Expand. Please add a project summary in project settings.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    try {
+      final aiService = AIExpandService();
+      final taskDescription = scheduledTask.task.description?.isNotEmpty == true
+          ? scheduledTask.task.description!
+          : scheduledTask.task.title;
+
+      final subtaskItems = await aiService.expandTask(
+        taskDescription: taskDescription,
+        projectSummary: project.projectSummary!,
+        isDevelopmentProject: project.type == ProjectType.development,
+        techStack: project.techStack,
+      );
+
+      final isJiraTask = project.jiraBaseUrl != null &&
+          project.extractedJiraProjectKey != null &&
+          scheduledTask.task.jiraTicketId != null;
+
+      List<ScheduledTask> newScheduledTasks = [];
+
+      if (isJiraTask) {
+        final jiraService = JiraService.instance;
+        for (final item in subtaskItems) {
+          try {
+            final subtask = await jiraService.createSubtask(
+              baseUrl: project.jiraBaseUrl!,
+              projectKey: project.extractedJiraProjectKey!,
+              parentIssueKey: scheduledTask.task.key,
+              summary: '${item.title}: ${item.prompt}',
+              priority: 'Medium',
+            );
+            newScheduledTasks.add(
+              ScheduledTask(
+                id: '${DateTime.now().millisecondsSinceEpoch}_${item.id}',
+                task: subtask,
+                projectId: project.id,
+                projectName: project.name,
+                projectColor: project.color,
+                scheduledAt: DateTime.now(),
+              ),
+            );
+          } catch (e) {
+            print('Failed to create subtask "${item.title}": $e');
+          }
+        }
+
+        if (newScheduledTasks.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Successfully created ${newScheduledTasks.length} of ${subtaskItems.length} AI-generated subtasks!'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        for (final item in subtaskItems) {
+          final subtask = Task(
+            id: '${DateTime.now().millisecondsSinceEpoch}_${item.id}',
+            key: '${DateTime.now().millisecondsSinceEpoch}_${item.id}',
+            title: item.title,
+            description: item.prompt,
+            projectId: project.id,
+            createdAt: DateTime.now(),
+            status: 'To Do',
+            priorityEnum: Priority.medium,
+            parentKey: scheduledTask.task.key,
+            isSubtask: true,
+          );
+          newScheduledTasks.add(
+            ScheduledTask(
+              id: '${DateTime.now().millisecondsSinceEpoch}_sched_${item.id}',
+              task: subtask,
+              projectId: project.id,
+              projectName: project.name,
+              projectColor: project.color,
+              scheduledAt: DateTime.now(),
+            ),
+          );
+        }
+
+        if (newScheduledTasks.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Successfully created ${newScheduledTasks.length} AI-generated subtasks!'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
+
+      if (newScheduledTasks.isNotEmpty) {
+        setState(() {
+          _scheduledTasks.addAll(newScheduledTasks);
+          _scheduledTasks.sort(
+            (a, b) => _comparePriority(a.task.priorityEnum, b.task.priorityEnum),
+          );
+        });
+
+        await _saveScheduledTasks();
+        _notifyScheduleUpdated();
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error expanding task: ${e.toString()}'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   Future<void> _fetchAndScheduleAssignedIssues() async {
     print('Fetching assigned Jira issues from all projects...');
     
@@ -1015,6 +1152,10 @@ class _DashboardPageState extends State<DashboardPage> with SingleTickerProvider
     for (final callback in _scheduleUpdateCallbacks) {
       callback();
     }
+  }
+
+  void _notifyScheduleUpdated() {
+    _notifyScheduleUpdate();
   }
 
   void _registerScheduleUpdateCallback(Function() callback) {
@@ -1245,6 +1386,7 @@ class _DashboardPageState extends State<DashboardPage> with SingleTickerProvider
           scheduledTasks: _scheduledTasks,
           onRemoveTask: _removeTaskFromSchedule,
           onOpenTaskDetail: _openScheduledTaskDetail,
+          onExpandScheduledTaskWithAI: _expandScheduledTaskWithAI,
           onRegisterScheduleUpdate: _registerScheduleUpdateCallback,
           onUnregisterScheduleUpdate: _unregisterScheduleUpdateCallback,
         ),
@@ -1453,6 +1595,7 @@ class _DashboardPageState extends State<DashboardPage> with SingleTickerProvider
       scheduledTasks: _scheduledTasks,
       onRemoveTask: _removeTaskFromSchedule,
       onOpenTaskDetail: _openScheduledTaskDetail,
+      onExpandTaskWithAI: _expandScheduledTaskWithAI,
       showFullSchedule: true,
     );
   }
@@ -2409,6 +2552,7 @@ class SharedSchedulePanel extends StatefulWidget {
   final List<ScheduledTask>? scheduledTasks;
   final Function(ScheduledTask)? onRemoveTask;
   final Function(ScheduledTask)? onOpenTaskDetail;
+  final Future<void> Function(ScheduledTask)? onExpandTaskWithAI;
   final bool showFullSchedule;
 
   const SharedSchedulePanel({
@@ -2420,6 +2564,7 @@ class SharedSchedulePanel extends StatefulWidget {
     this.scheduledTasks,
     this.onRemoveTask,
     this.onOpenTaskDetail,
+    this.onExpandTaskWithAI,
     this.showFullSchedule = false,
   }) : super(key: key);
 
@@ -2683,23 +2828,48 @@ class _SharedSchedulePanelState extends State<SharedSchedulePanel> {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        child: GestureDetector(
-                          onTap: () => widget.onRemoveTask?.call(scheduledTask),
-                          child: Container(
-                            padding: const EdgeInsets.all(2),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(4),
-                              color: isHovered ? Colors.red.withOpacity(0.1) : Colors.transparent,
+                      Row(
+                        children: [
+                          if (widget.onExpandTaskWithAI != null) ...[
+                            MouseRegion(
+                              cursor: SystemMouseCursors.click,
+                              child: GestureDetector(
+                                onTap: () => widget.onExpandTaskWithAI?.call(scheduledTask),
+                                child: Container(
+                                  padding: const EdgeInsets.all(2),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(4),
+                                    color: isHovered ? Colors.purple.withOpacity(0.1) : Colors.transparent,
+                                  ),
+                                  child: Icon(
+                                    Icons.auto_awesome,
+                                    size: 16,
+                                    color: isHovered ? Colors.purple[700] : Colors.grey[600],
+                                  ),
+                                ),
+                              ),
                             ),
-                            child: Icon(
-                              Icons.close,
-                              size: 16,
-                              color: isHovered ? Colors.red[700] : Colors.grey[600],
+                            const SizedBox(width: 4),
+                          ],
+                          MouseRegion(
+                            cursor: SystemMouseCursors.click,
+                            child: GestureDetector(
+                              onTap: () => widget.onRemoveTask?.call(scheduledTask),
+                              child: Container(
+                                padding: const EdgeInsets.all(2),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(4),
+                                  color: isHovered ? Colors.red.withOpacity(0.1) : Colors.transparent,
+                                ),
+                                child: Icon(
+                                  Icons.close,
+                                  size: 16,
+                                  color: isHovered ? Colors.red[700] : Colors.grey[600],
+                                ),
+                              ),
                             ),
                           ),
-                        ),
+                        ],
                       ),
                     ],
                   ),
@@ -2803,6 +2973,7 @@ class ProjectDetailPage extends StatefulWidget {
   final List<ScheduledTask>? scheduledTasks;
   final Function(ScheduledTask)? onRemoveTask;
   final Function(ScheduledTask)? onOpenTaskDetail;
+  final Future<void> Function(ScheduledTask)? onExpandScheduledTaskWithAI;
   final Function(ProjectDetailPage)? onScheduleUpdated;
   final Function(Function())? onRegisterScheduleUpdate;
   final Function(Function())? onUnregisterScheduleUpdate;
@@ -2817,6 +2988,7 @@ class ProjectDetailPage extends StatefulWidget {
     this.scheduledTasks,
     this.onRemoveTask,
     this.onOpenTaskDetail,
+    this.onExpandScheduledTaskWithAI,
     this.onScheduleUpdated,
     this.onRegisterScheduleUpdate,
     this.onUnregisterScheduleUpdate,
@@ -4217,6 +4389,7 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
       scheduledTasks: _currentScheduledTasks,
       onRemoveTask: widget.onRemoveTask,
       onOpenTaskDetail: widget.onOpenTaskDetail,
+      onExpandTaskWithAI: widget.onExpandScheduledTaskWithAI,
       showFullSchedule: true,
     );
   }
