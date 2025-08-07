@@ -848,6 +848,7 @@ class _TaskManagerAppState extends State<TaskManagerApp> with SingleTickerProvid
   List<Project> _personalProjects = [];
   Map<String, List<Task>> _projectJiraIssues = {}; // Store Jira issues by project ID
   List<ScheduledTask> _scheduledTasks = []; // Store scheduled tasks
+  List<Task> _aiTaskQueue = []; // Store tasks queued for AI
   List<Function()> _scheduleUpdateCallbacks = []; // Callbacks to notify schedule updates
 
   @override
@@ -1024,8 +1025,12 @@ class _TaskManagerAppState extends State<TaskManagerApp> with SingleTickerProvid
           _scheduledTasks = json
               .map((taskJson) => ScheduledTask.fromJson(taskJson))
               .toList();
+          _aiTaskQueue = _scheduledTasks
+              .where((st) => st.task.queuedForAI)
+              .map((st) => st.task)
+              .toList();
         });
-        
+
         print('Loaded ${_scheduledTasks.length} scheduled tasks');
       }
     } catch (e) {
@@ -1077,6 +1082,9 @@ class _TaskManagerAppState extends State<TaskManagerApp> with SingleTickerProvid
 
     setState(() {
       _scheduledTasks.add(scheduledTask);
+      if (task.queuedForAI) {
+        _aiTaskQueue.add(task);
+      }
     });
     
     _saveScheduledTasks();
@@ -1096,8 +1104,9 @@ class _TaskManagerAppState extends State<TaskManagerApp> with SingleTickerProvid
   void _removeTaskFromSchedule(ScheduledTask scheduledTask) {
     setState(() {
       _scheduledTasks.removeWhere((st) => st.id == scheduledTask.id);
+      _aiTaskQueue.removeWhere((t) => t.id == scheduledTask.task.id);
     });
-    
+
     _saveScheduledTasks();
     _notifyScheduleUpdate();
     
@@ -1110,6 +1119,45 @@ class _TaskManagerAppState extends State<TaskManagerApp> with SingleTickerProvid
         ),
       );
     }
+  }
+
+  void _updateScheduledTask(Task updatedTask) {
+    setState(() {
+      final index = _scheduledTasks.indexWhere((st) =>
+          st.task.id == updatedTask.id ||
+          (updatedTask.jiraTicketId != null && st.task.jiraTicketId == updatedTask.jiraTicketId));
+      if (index != -1) {
+        final st = _scheduledTasks[index];
+        _scheduledTasks[index] = ScheduledTask(
+          id: st.id,
+          task: updatedTask,
+          projectId: st.projectId,
+          projectName: st.projectName,
+          projectColor: st.projectColor,
+          scheduledAt: st.scheduledAt,
+          dueDate: st.dueDate,
+        );
+      }
+
+      if (updatedTask.queuedForAI) {
+        final qIndex = _aiTaskQueue.indexWhere((t) => t.id == updatedTask.id);
+        if (qIndex != -1) {
+          _aiTaskQueue[qIndex] = updatedTask;
+        } else {
+          _aiTaskQueue.add(updatedTask);
+        }
+      } else {
+        _aiTaskQueue.removeWhere((t) => t.id == updatedTask.id);
+      }
+    });
+
+    _saveScheduledTasks();
+    _notifyScheduleUpdate();
+  }
+
+  void _toggleAIQueue(ScheduledTask scheduledTask, bool queued) {
+    final updatedTask = scheduledTask.task.copyWith(queuedForAI: queued);
+    _updateScheduledTask(updatedTask);
   }
 
   void _reorderScheduledTasks(int oldIndex, int newIndex) {
@@ -1434,6 +1482,8 @@ class _TaskManagerAppState extends State<TaskManagerApp> with SingleTickerProvid
         onRemoveTaskFromSchedule: _removeTaskFromSchedule,
         onExpandScheduledTask: _expandScheduledTaskWithAI,
         onReorderScheduledTasks: _reorderScheduledTasks,
+        onToggleAIQueue: _toggleAIQueue,
+        onUpdateScheduledTask: _updateScheduledTask,
         onRegisterScheduleUpdate: _registerScheduleUpdate,
         onUnregisterScheduleUpdate: _unregisterScheduleUpdate,
         onUpdateSettings: _updateSettings,
@@ -1460,6 +1510,8 @@ class MainLayout extends StatefulWidget {
   final Function(ScheduledTask) onRemoveTaskFromSchedule;
   final Future<void> Function(BuildContext, ScheduledTask) onExpandScheduledTask;
   final Function(int, int) onReorderScheduledTasks;
+  final Function(ScheduledTask, bool) onToggleAIQueue;
+  final Function(Task) onUpdateScheduledTask;
   final Function(Function()) onRegisterScheduleUpdate;
   final Function(Function()) onUnregisterScheduleUpdate;
   final Function(AppSettings) onUpdateSettings;
@@ -1483,6 +1535,8 @@ class MainLayout extends StatefulWidget {
     required this.onRemoveTaskFromSchedule,
     required this.onExpandScheduledTask,
     required this.onReorderScheduledTasks,
+    required this.onToggleAIQueue,
+    required this.onUpdateScheduledTask,
     required this.onRegisterScheduleUpdate,
     required this.onUnregisterScheduleUpdate,
     required this.onUpdateSettings,
@@ -1815,6 +1869,7 @@ class _MainLayoutState extends State<MainLayout> {
               onRemoveTask: widget.onRemoveTaskFromSchedule,
               onExpandTask: widget.onExpandScheduledTask,
               onReorder: widget.onReorderScheduledTasks,
+              onToggleAIQueue: widget.onToggleAIQueue,
               onOpenTaskDetail: (scheduledTask) {
                 // Find the project for this task
                 final project = [...widget.professionalProjects, ...widget.personalProjects]
@@ -1829,6 +1884,7 @@ class _MainLayoutState extends State<MainLayout> {
                       jiraBaseUrl: project.jiraBaseUrl,
                       projectKey: project.extractedJiraProjectKey,
                       onAddToSchedule: widget.onAddTaskToSchedule,
+                      onTaskUpdated: widget.onUpdateScheduledTask,
                     ),
                   ),
                 );
@@ -1934,6 +1990,7 @@ class _MainLayoutState extends State<MainLayout> {
                           jiraBaseUrl: widget.professionalProjects.firstWhere((p) => p.id == scheduledTask.projectId).jiraBaseUrl,
                           projectKey: widget.professionalProjects.firstWhere((p) => p.id == scheduledTask.projectId).extractedJiraProjectKey,
                           onAddToSchedule: widget.onAddTaskToSchedule,
+                          onTaskUpdated: widget.onUpdateScheduledTask,
             ),
                       ),
                     );
@@ -1965,6 +2022,7 @@ class _MainLayoutState extends State<MainLayout> {
                           jiraBaseUrl: widget.personalProjects.firstWhere((p) => p.id == scheduledTask.projectId).jiraBaseUrl,
                           projectKey: widget.personalProjects.firstWhere((p) => p.id == scheduledTask.projectId).extractedJiraProjectKey,
                           onAddToSchedule: widget.onAddTaskToSchedule,
+                          onTaskUpdated: widget.onUpdateScheduledTask,
             ),
                       ),
                     );
@@ -2018,6 +2076,7 @@ class _MainLayoutState extends State<MainLayout> {
               jiraBaseUrl: _selectedProject!.jiraBaseUrl,
               projectKey: _selectedProject!.extractedJiraProjectKey,
               onAddToSchedule: widget.onAddTaskToSchedule,
+              onTaskUpdated: widget.onUpdateScheduledTask,
             ),
           ),
         );
@@ -2562,6 +2621,7 @@ class SharedSchedulePanel extends StatelessWidget {
   final Function(ScheduledTask) onRemoveTask;
   final Function(ScheduledTask) onOpenTaskDetail;
   final Future<void> Function(BuildContext, ScheduledTask) onExpandTask;
+  final Function(ScheduledTask, bool) onToggleAIQueue;
   final Function(int, int)? onReorder;
 
   const SharedSchedulePanel({
@@ -2570,6 +2630,7 @@ class SharedSchedulePanel extends StatelessWidget {
     required this.onRemoveTask,
     required this.onOpenTaskDetail,
     required this.onExpandTask,
+    required this.onToggleAIQueue,
     this.onReorder,
   });
 
@@ -2711,6 +2772,7 @@ class SharedSchedulePanel extends StatelessWidget {
                             onRemoveTask: onRemoveTask,
                             onOpenTaskDetail: onOpenTaskDetail,
                             onExpandTask: onExpandTask,
+                            onToggleAIQueue: onToggleAIQueue,
                               ),
                             ),
                       );
@@ -2730,6 +2792,7 @@ class _HoverCard extends StatefulWidget {
   final Function(ScheduledTask) onRemoveTask;
   final Function(ScheduledTask) onOpenTaskDetail;
   final Future<void> Function(BuildContext, ScheduledTask) onExpandTask;
+  final Function(ScheduledTask, bool) onToggleAIQueue;
 
   const _HoverCard({
     super.key,
@@ -2738,6 +2801,7 @@ class _HoverCard extends StatefulWidget {
     required this.onRemoveTask,
     required this.onOpenTaskDetail,
     required this.onExpandTask,
+    required this.onToggleAIQueue,
   });
 
   @override
@@ -2893,6 +2957,19 @@ class _HoverCardState extends State<_HoverCard> {
                   ),
                   const SizedBox(width: 4),
                 ],
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: Checkbox(
+                    value: scheduledTask.task.queuedForAI,
+                    onChanged: (value) => widget.onToggleAIQueue(scheduledTask, value ?? false),
+                    activeColor: Colors.purple[300],
+                    checkColor: Colors.white,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+                const SizedBox(width: 4),
                 Material(
                   color: Colors.transparent,
                   child: IconButton(

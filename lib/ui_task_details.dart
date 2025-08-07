@@ -55,6 +55,13 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
     widget.onTaskUpdated?.call(_task);
   }
 
+  void _toggleAIQueue(bool? value) {
+    setState(() {
+      _task = _task.copyWith(queuedForAI: value ?? false);
+    });
+    widget.onTaskUpdated?.call(_task);
+  }
+
   Future<void> _expandTaskWithAI() async {
     if (widget.project.projectSummary == null || widget.project.projectSummary!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1095,12 +1102,23 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
                     ),
                   ),
                   const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: _task.queuedForAI,
+                        onChanged: _toggleAIQueue,
+                      ),
+                      const SizedBox(width: 8),
+                      const Text('Queue for AI'),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      onPressed: widget.project.projectSummary != null && 
-                               widget.project.projectSummary!.isNotEmpty && 
-                               !_isExpandingTask && 
+                      onPressed: widget.project.projectSummary != null &&
+                               widget.project.projectSummary!.isNotEmpty &&
+                               !_isExpandingTask &&
                                !_isDraftingEmail &&
                                (isEmailTask(_task.description) ? true : !_isExpandingTask)
                         ? (isEmailTask(_task.description) ? _draftEmailWithAI : _expandTaskWithAI)
