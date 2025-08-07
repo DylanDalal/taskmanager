@@ -25,6 +25,7 @@ class Task {
   final String projectId;
   final String? jiraTicketId; // This will be the same as key for Jira issues
   final Priority priorityEnum;
+  final bool queuedForAI;
 
   Task({
     required this.id,
@@ -45,6 +46,7 @@ class Task {
     required this.projectId,
     this.jiraTicketId,
     this.priorityEnum = Priority.medium,
+    this.queuedForAI = false,
   });
 
   // Getter for isCompleted - checks if status is "Done"
@@ -77,6 +79,7 @@ class Task {
     String? sprintName,
     bool? isInActiveSprint,
     String? projectId,
+    bool? queuedForAI,
   }) {
     return Task(
       id: id,
@@ -97,6 +100,7 @@ class Task {
       projectId: projectId ?? this.projectId,
       jiraTicketId: jiraTicketId ?? this.jiraTicketId,
       priorityEnum: priorityEnum ?? this.priorityEnum,
+      queuedForAI: queuedForAI ?? this.queuedForAI,
     );
   }
 
@@ -136,6 +140,7 @@ class Task {
       'projectId': projectId,
       'jiraTicketId': jiraTicketId,
       'priorityEnum': priorityString,
+      'queuedForAI': queuedForAI,
     };
   }
 
@@ -181,6 +186,7 @@ class Task {
       projectId: json['projectId'] as String,
       jiraTicketId: json['jiraTicketId'] as String?,
       priorityEnum: priorityEnum,
+      queuedForAI: json['queuedForAI'] as bool? ?? false,
     );
   }
 
