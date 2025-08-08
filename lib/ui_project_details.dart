@@ -100,18 +100,27 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
   }
 
   void _openJiraIssueDetail(Task issue) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => TaskDetailPage(
-          task: issue,
-          project: _project,
-          projectName: _project.name,
-          jiraBaseUrl: _project.jiraBaseUrl!,
-          projectKey: _project.extractedJiraProjectKey!,
-          onAddToSchedule: widget.onAddToSchedule,
+    // Refresh Jira issues to get the latest data including subtasks
+    _fetchJiraIssues().then((_) {
+      // Find the updated issue in the refreshed Jira issues
+      final updatedIssue = _jiraIssues.firstWhere(
+        (refreshedIssue) => refreshedIssue.jiraTicketId == issue.jiraTicketId,
+        orElse: () => issue,
+      );
+      
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => TaskDetailPage(
+            task: updatedIssue,
+            project: _project,
+            projectName: _project.name,
+            jiraBaseUrl: _project.jiraBaseUrl!,
+            projectKey: _project.extractedJiraProjectKey!,
+            onAddToSchedule: widget.onAddToSchedule,
+          ),
         ),
-      ),
-    );
+      );
+    });
   }
 
   Future<void> _fetchJiraIssues() async {
@@ -264,10 +273,23 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
   }
 
   void _openLocalTaskDetail(Task task) {
+    // Check if this task exists in the schedule and use the updated version
+    ScheduledTask? scheduledTask;
+    try {
+      scheduledTask = widget.scheduledTasks?.firstWhere(
+        (st) => st.task.id == task.id,
+      );
+    } catch (e) {
+      scheduledTask = null;
+    }
+    
+    // Use the scheduled task if it exists (it might have updated subtasks), otherwise use the original task
+    final taskToShow = scheduledTask?.task ?? task;
+    
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => TaskDetailPage(
-          task: task,
+          task: taskToShow,
           project: _project,
           onTaskUpdated: (updatedTask) {
             setState(() {

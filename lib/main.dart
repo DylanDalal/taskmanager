@@ -850,6 +850,8 @@ class _TaskManagerAppState extends State<TaskManagerApp> with SingleTickerProvid
   List<ScheduledTask> _scheduledTasks = []; // Store scheduled tasks
   List<Task> _aiTaskQueue = []; // Store tasks queued for AI
   List<Function()> _scheduleUpdateCallbacks = []; // Callbacks to notify schedule updates
+  Set<String> _expandingTasks = {}; // Track tasks currently being expanded
+  Map<String, double> _expandProgress = {}; // Track expansion progress per task (0.0 - 1.0)
 
   @override
   void initState() {
@@ -1175,6 +1177,11 @@ class _TaskManagerAppState extends State<TaskManagerApp> with SingleTickerProvid
 
   Future<void> _expandScheduledTaskWithAI(
       BuildContext context, ScheduledTask scheduledTask) async {
+    // Prevent multiple clicks
+    if (_expandingTasks.contains(scheduledTask.id)) {
+      return;
+    }
+
     final project = [..._professionalProjects, ..._personalProjects]
         .firstWhere((p) => p.id == scheduledTask.projectId);
 
@@ -1189,11 +1196,22 @@ class _TaskManagerAppState extends State<TaskManagerApp> with SingleTickerProvid
       return;
     }
 
+    // Mark task as being expanded
+    setState(() {
+      _expandingTasks.add(scheduledTask.id);
+      _expandProgress[scheduledTask.id] = 0.05;
+    });
+
     try {
       final aiService = AIExpandService();
       final taskDescription = scheduledTask.task.description?.isNotEmpty == true
           ? scheduledTask.task.description!
           : scheduledTask.task.title;
+
+      // Initial prep done
+      setState(() {
+        _expandProgress[scheduledTask.id] = 0.15;
+      });
 
       final subtaskItems = await aiService.expandTask(
         taskDescription: taskDescription,
@@ -1202,46 +1220,176 @@ class _TaskManagerAppState extends State<TaskManagerApp> with SingleTickerProvid
         techStack: project.techStack,
       );
 
+      // AI response received
+      setState(() {
+        _expandProgress[scheduledTask.id] = 0.6;
+      });
+
       final List<Task> newSubtasks = [];
       final parentIndex =
           _scheduledTasks.indexWhere((st) => st.id == scheduledTask.id);
       int insertIndex = parentIndex + 1;
 
-      for (final item in subtaskItems) {
-        final uniqueId =
-            DateTime.now().millisecondsSinceEpoch.toString() + '_${item.id}';
-        final subtask = Task(
-          id: uniqueId,
-          key: uniqueId,
-          title: item.title,
-          description: item.prompt,
-          projectId: project.id,
-          createdAt: DateTime.now(),
-          status: 'To Do',
-          priorityEnum: Priority.medium,
-          parentKey: scheduledTask.task.key,
-          isSubtask: true,
-        );
-        newSubtasks.add(subtask);
+      // Check if this is a Jira-linked task
+      final isJiraTask = scheduledTask.task.jiraTicketId != null && 
+                        project.jiraBaseUrl != null && 
+                        project.extractedJiraProjectKey != null;
 
-        final scheduledSubtask = ScheduledTask(
-          id: uniqueId,
-          task: subtask,
-          projectId: project.id,
-          projectName: project.name,
-          projectColor: project.color,
-          scheduledAt: DateTime.now(),
+      if (isJiraTask) {
+        // Create Jira subtasks first
+        final jiraService = JiraService.instance;
+        List<Task> createdJiraSubtasks = [];
+        
+        for (int i = 0; i < subtaskItems.length; i++) {
+          final item = subtaskItems[i];
+          try {
+            final jiraSubtask = await jiraService.createSubtask(
+              baseUrl: project.jiraBaseUrl!,
+              projectKey: project.extractedJiraProjectKey!,
+              parentIssueKey: scheduledTask.task.key,
+              summary: '${item.title}: ${item.prompt}', // Combine title and description
+              priority: 'Medium',
+            );
+            createdJiraSubtasks.add(jiraSubtask);
+            print('Created Jira subtask: ${jiraSubtask.key} - ${jiraSubtask.title}');
+          } catch (e) {
+            print('Failed to create Jira subtask "${item.title}": $e');
+          }
+
+          // Update progress through subtask creation (0.6 -> 0.9)
+          if (subtaskItems.isNotEmpty) {
+            final progress = 0.6 + ((i + 1) / subtaskItems.length) * 0.3;
+            setState(() {
+              _expandProgress[scheduledTask.id] = progress.clamp(0.6, 0.95);
+            });
+          }
+        }
+        
+        // Create local subtasks for the schedule (using Jira subtask data if available)
+        for (int i = 0; i < subtaskItems.length; i++) {
+          final item = subtaskItems[i];
+          final jiraSubtask = i < createdJiraSubtasks.length ? createdJiraSubtasks[i] : null;
+          
+          final uniqueId = jiraSubtask?.id ?? 
+                          DateTime.now().millisecondsSinceEpoch.toString() + '_${item.id}';
+          final subtask = Task(
+            id: uniqueId,
+            key: jiraSubtask?.key ?? uniqueId,
+            title: item.title,
+            description: item.prompt,
+            projectId: project.id,
+            createdAt: DateTime.now(),
+            status: 'To Do',
+            priorityEnum: Priority.medium,
+            parentKey: scheduledTask.task.key,
+            isSubtask: true,
+            jiraTicketId: jiraSubtask?.jiraTicketId,
+          );
+          newSubtasks.add(subtask);
+
+          final scheduledSubtask = ScheduledTask(
+            id: uniqueId,
+            task: subtask,
+            projectId: project.id,
+            projectName: project.name,
+            projectColor: project.color,
+            scheduledAt: DateTime.now(),
+          );
+          _scheduledTasks.insert(insertIndex, scheduledSubtask);
+          insertIndex++;
+        }
+        
+        // Show success message for Jira subtasks
+        if (createdJiraSubtasks.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Successfully created ${createdJiraSubtasks.length} of ${subtaskItems.length} AI-generated Jira subtasks!'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        // Create local subtasks only for non-Jira tasks
+        for (int i = 0; i < subtaskItems.length; i++) {
+          final item = subtaskItems[i];
+          final uniqueId =
+              DateTime.now().millisecondsSinceEpoch.toString() + '_${item.id}';
+          final subtask = Task(
+            id: uniqueId,
+            key: uniqueId,
+            title: item.title,
+            description: item.prompt,
+            projectId: project.id,
+            createdAt: DateTime.now(),
+            status: 'To Do',
+            priorityEnum: Priority.medium,
+            parentKey: scheduledTask.task.key,
+            isSubtask: true,
+          );
+          newSubtasks.add(subtask);
+
+          final scheduledSubtask = ScheduledTask(
+            id: uniqueId,
+            task: subtask,
+            projectId: project.id,
+            projectName: project.name,
+            projectColor: project.color,
+            scheduledAt: DateTime.now(),
+          );
+          _scheduledTasks.insert(insertIndex, scheduledSubtask);
+          insertIndex++;
+
+          // Update progress through subtask creation (0.6 -> 0.9)
+          if (subtaskItems.isNotEmpty) {
+            final progress = 0.6 + ((i + 1) / subtaskItems.length) * 0.3;
+            setState(() {
+              _expandProgress[scheduledTask.id] = progress.clamp(0.6, 0.95);
+            });
+          }
+        }
+      }
+
+      // Mark the parent task as expanded with AI
+      final parentTaskIndex = _scheduledTasks.indexWhere((st) => st.id == scheduledTask.id);
+      if (parentTaskIndex != -1) {
+        final parentTask = _scheduledTasks[parentTaskIndex];
+        final updatedParentTask = ScheduledTask(
+          id: parentTask.id,
+          task: parentTask.task.copyWith(hasBeenExpandedWithAI: true),
+          projectId: parentTask.projectId,
+          projectName: parentTask.projectName,
+          projectColor: parentTask.projectColor,
+          scheduledAt: parentTask.scheduledAt,
+          dueDate: parentTask.dueDate,
         );
-        _scheduledTasks.insert(insertIndex, scheduledSubtask);
-        insertIndex++;
+        _scheduledTasks[parentTaskIndex] = updatedParentTask;
       }
 
       setState(() {});
       await _saveScheduledTasks();
       _notifyScheduleUpdate();
 
-      _showScheduleSubtasksDialog(context, newSubtasks);
+      // Finalizing
+      setState(() {
+        _expandProgress[scheduledTask.id] = 1.0;
+      });
+
+      // Show the subtasks dialog and remove from expanding set when dialog closes
+      await _showScheduleSubtasksDialog(context, newSubtasks);
+      
+      // Remove from expanding set after dialog is shown
+      setState(() {
+        _expandingTasks.remove(scheduledTask.id);
+        _expandProgress.remove(scheduledTask.id);
+      });
     } catch (e) {
+      // Remove from expanding set on error
+      setState(() {
+        _expandingTasks.remove(scheduledTask.id);
+        _expandProgress.remove(scheduledTask.id);
+      });
+      
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error expanding task: $e'),
@@ -1252,9 +1400,9 @@ class _TaskManagerAppState extends State<TaskManagerApp> with SingleTickerProvid
     }
   }
 
-  void _showScheduleSubtasksDialog(
-      BuildContext context, List<Task> subtasks) {
-    showDialog(
+  Future<void> _showScheduleSubtasksDialog(
+      BuildContext context, List<Task> subtasks) async {
+    await showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: Row(
@@ -1488,9 +1636,11 @@ class _TaskManagerAppState extends State<TaskManagerApp> with SingleTickerProvid
         onUnregisterScheduleUpdate: _unregisterScheduleUpdate,
         onUpdateSettings: _updateSettings,
         onFetchJiraIssuesForProject: _fetchJiraIssuesForProject,
-        onAddSharedScript: _addSharedScript,
-        onUpdateSharedScript: _updateSharedScript,
-        onRemoveSharedScript: _removeSharedScript,
+              onAddSharedScript: _addSharedScript,
+      onUpdateSharedScript: _updateSharedScript,
+      onRemoveSharedScript: _removeSharedScript,
+      expandingTasks: _expandingTasks,
+      expandProgress: _expandProgress,
       ),
     );
   }
@@ -1519,6 +1669,8 @@ class MainLayout extends StatefulWidget {
   final Function(Script) onAddSharedScript;
   final Function(Script) onUpdateSharedScript;
   final Function(String) onRemoveSharedScript;
+  final Set<String> expandingTasks;
+  final Map<String, double> expandProgress;
 
   const MainLayout({
     super.key,
@@ -1544,6 +1696,8 @@ class MainLayout extends StatefulWidget {
     required this.onAddSharedScript,
     required this.onUpdateSharedScript,
     required this.onRemoveSharedScript,
+    required this.expandingTasks,
+    required this.expandProgress,
   });
 
   @override
@@ -1867,27 +2021,59 @@ class _MainLayoutState extends State<MainLayout> {
             child: SharedSchedulePanel(
               scheduledTasks: widget.scheduledTasks,
               onRemoveTask: widget.onRemoveTaskFromSchedule,
-              onExpandTask: widget.onExpandScheduledTask,
-              onReorder: widget.onReorderScheduledTasks,
-              onToggleAIQueue: widget.onToggleAIQueue,
+                      onExpandTask: widget.onExpandScheduledTask,
+        onReorder: widget.onReorderScheduledTasks,
+        onToggleAIQueue: widget.onToggleAIQueue,
+        expandingTasks: widget.expandingTasks,
+        expandProgress: widget.expandProgress,
               onOpenTaskDetail: (scheduledTask) {
                 // Find the project for this task
                 final project = [...widget.professionalProjects, ...widget.personalProjects]
                     .firstWhere((p) => p.id == scheduledTask.projectId);
                 
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (context) => TaskDetailPage(
-                      task: scheduledTask.task,
-                      project: project,
-                      projectName: project.name,
-                      jiraBaseUrl: project.jiraBaseUrl,
-                      projectKey: project.extractedJiraProjectKey,
-                      onAddToSchedule: widget.onAddTaskToSchedule,
-                      onTaskUpdated: widget.onUpdateScheduledTask,
+                // For Jira tasks, we need to refresh the issue to get the latest subtasks
+                if (scheduledTask.task.jiraTicketId != null && 
+                    project.jiraBaseUrl != null && 
+                    project.extractedJiraProjectKey != null) {
+                  // Refresh Jira issues for this project to get updated task with subtasks
+                  widget.onFetchJiraIssuesForProject(project).then((_) {
+                    // Find the updated task in the refreshed Jira issues
+                    final updatedJiraIssues = widget.projectJiraIssues[project.id] ?? [];
+                    final updatedTask = updatedJiraIssues.firstWhere(
+                      (issue) => issue.jiraTicketId == scheduledTask.task.jiraTicketId,
+                      orElse: () => scheduledTask.task,
+                    );
+                    
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => TaskDetailPage(
+                          task: updatedTask,
+                          project: project,
+                          projectName: project.name,
+                          jiraBaseUrl: project.jiraBaseUrl,
+                          projectKey: project.extractedJiraProjectKey,
+                          onAddToSchedule: widget.onAddTaskToSchedule,
+                          onTaskUpdated: widget.onUpdateScheduledTask,
+                        ),
+                      ),
+                    );
+                  });
+                } else {
+                  // For local tasks, use the scheduled task which should have the latest data
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => TaskDetailPage(
+                        task: scheduledTask.task,
+                        project: project,
+                        projectName: project.name,
+                        jiraBaseUrl: project.jiraBaseUrl,
+                        projectKey: project.extractedJiraProjectKey,
+                        onAddToSchedule: widget.onAddTaskToSchedule,
+                        onTaskUpdated: widget.onUpdateScheduledTask,
+                      ),
                     ),
-                  ),
-                );
+                  );
+                }
               },
               ),
             ),
@@ -1981,19 +2167,51 @@ class _MainLayoutState extends State<MainLayout> {
                   scheduledTasks: widget.scheduledTasks,
                   onRemoveTask: widget.onRemoveTaskFromSchedule,
                   onOpenTaskDetail: (scheduledTask) {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) => TaskDetailPage(
-                          task: scheduledTask.task,
-                          project: widget.professionalProjects.firstWhere((p) => p.id == scheduledTask.projectId),
-                          projectName: scheduledTask.projectName,
-                          jiraBaseUrl: widget.professionalProjects.firstWhere((p) => p.id == scheduledTask.projectId).jiraBaseUrl,
-                          projectKey: widget.professionalProjects.firstWhere((p) => p.id == scheduledTask.projectId).extractedJiraProjectKey,
-                          onAddToSchedule: widget.onAddTaskToSchedule,
-                          onTaskUpdated: widget.onUpdateScheduledTask,
-            ),
-                      ),
-                    );
+                    final project = widget.professionalProjects.firstWhere((p) => p.id == scheduledTask.projectId);
+                    
+                    // For Jira tasks, we need to refresh the issue to get the latest subtasks
+                    if (scheduledTask.task.jiraTicketId != null && 
+                        project.jiraBaseUrl != null && 
+                        project.extractedJiraProjectKey != null) {
+                      // Refresh Jira issues for this project to get updated task with subtasks
+                      widget.onFetchJiraIssuesForProject(project).then((_) {
+                        // Find the updated task in the refreshed Jira issues
+                        final updatedJiraIssues = widget.projectJiraIssues[project.id] ?? [];
+                        final updatedTask = updatedJiraIssues.firstWhere(
+                          (issue) => issue.jiraTicketId == scheduledTask.task.jiraTicketId,
+                          orElse: () => scheduledTask.task,
+                        );
+                        
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => TaskDetailPage(
+                              task: updatedTask,
+                              project: project,
+                              projectName: scheduledTask.projectName,
+                              jiraBaseUrl: project.jiraBaseUrl,
+                              projectKey: project.extractedJiraProjectKey,
+                              onAddToSchedule: widget.onAddTaskToSchedule,
+                              onTaskUpdated: widget.onUpdateScheduledTask,
+                            ),
+                          ),
+                        );
+                      });
+                    } else {
+                      // For local tasks, use the scheduled task which should have the latest data
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => TaskDetailPage(
+                            task: scheduledTask.task,
+                            project: project,
+                            projectName: scheduledTask.projectName,
+                            jiraBaseUrl: project.jiraBaseUrl,
+                            projectKey: project.extractedJiraProjectKey,
+                            onAddToSchedule: widget.onAddTaskToSchedule,
+                            onTaskUpdated: widget.onUpdateScheduledTask,
+                          ),
+                        ),
+                      );
+                    }
                   },
                   onScheduleUpdated: null,
                   onRegisterScheduleUpdate: widget.onRegisterScheduleUpdate,
@@ -2013,19 +2231,51 @@ class _MainLayoutState extends State<MainLayout> {
                   scheduledTasks: widget.scheduledTasks,
                   onRemoveTask: widget.onRemoveTaskFromSchedule,
                   onOpenTaskDetail: (scheduledTask) {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) => TaskDetailPage(
-                          task: scheduledTask.task,
-                          project: widget.personalProjects.firstWhere((p) => p.id == scheduledTask.projectId),
-                          projectName: scheduledTask.projectName,
-                          jiraBaseUrl: widget.personalProjects.firstWhere((p) => p.id == scheduledTask.projectId).jiraBaseUrl,
-                          projectKey: widget.personalProjects.firstWhere((p) => p.id == scheduledTask.projectId).extractedJiraProjectKey,
-                          onAddToSchedule: widget.onAddTaskToSchedule,
-                          onTaskUpdated: widget.onUpdateScheduledTask,
-            ),
-                      ),
-                    );
+                    final project = widget.personalProjects.firstWhere((p) => p.id == scheduledTask.projectId);
+                    
+                    // For Jira tasks, we need to refresh the issue to get the latest subtasks
+                    if (scheduledTask.task.jiraTicketId != null && 
+                        project.jiraBaseUrl != null && 
+                        project.extractedJiraProjectKey != null) {
+                      // Refresh Jira issues for this project to get updated task with subtasks
+                      widget.onFetchJiraIssuesForProject(project).then((_) {
+                        // Find the updated task in the refreshed Jira issues
+                        final updatedJiraIssues = widget.projectJiraIssues[project.id] ?? [];
+                        final updatedTask = updatedJiraIssues.firstWhere(
+                          (issue) => issue.jiraTicketId == scheduledTask.task.jiraTicketId,
+                          orElse: () => scheduledTask.task,
+                        );
+                        
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => TaskDetailPage(
+                              task: updatedTask,
+                              project: project,
+                              projectName: scheduledTask.projectName,
+                              jiraBaseUrl: project.jiraBaseUrl,
+                              projectKey: project.extractedJiraProjectKey,
+                              onAddToSchedule: widget.onAddTaskToSchedule,
+                              onTaskUpdated: widget.onUpdateScheduledTask,
+                            ),
+                          ),
+                        );
+                      });
+                    } else {
+                      // For local tasks, use the scheduled task which should have the latest data
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => TaskDetailPage(
+                            task: scheduledTask.task,
+                            project: project,
+                            projectName: scheduledTask.projectName,
+                            jiraBaseUrl: project.jiraBaseUrl,
+                            projectKey: project.extractedJiraProjectKey,
+                            onAddToSchedule: widget.onAddTaskToSchedule,
+                            onTaskUpdated: widget.onUpdateScheduledTask,
+                          ),
+                        ),
+                      );
+                    }
                   },
                   onScheduleUpdated: null,
                   onRegisterScheduleUpdate: widget.onRegisterScheduleUpdate,
@@ -2067,19 +2317,49 @@ class _MainLayoutState extends State<MainLayout> {
       scheduledTasks: widget.scheduledTasks,
       onRemoveTask: widget.onRemoveTaskFromSchedule,
       onOpenTaskDetail: (scheduledTask) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => TaskDetailPage(
-              task: scheduledTask.task,
-              project: _selectedProject!,
-              projectName: scheduledTask.projectName,
-              jiraBaseUrl: _selectedProject!.jiraBaseUrl,
-              projectKey: _selectedProject!.extractedJiraProjectKey,
-              onAddToSchedule: widget.onAddTaskToSchedule,
-              onTaskUpdated: widget.onUpdateScheduledTask,
+        // For Jira tasks, we need to refresh the issue to get the latest subtasks
+        if (scheduledTask.task.jiraTicketId != null && 
+            _selectedProject!.jiraBaseUrl != null && 
+            _selectedProject!.extractedJiraProjectKey != null) {
+          // Refresh Jira issues for this project to get updated task with subtasks
+          widget.onFetchJiraIssuesForProject(_selectedProject!).then((_) {
+            // Find the updated task in the refreshed Jira issues
+            final updatedJiraIssues = widget.projectJiraIssues[_selectedProject!.id] ?? [];
+            final updatedTask = updatedJiraIssues.firstWhere(
+              (issue) => issue.jiraTicketId == scheduledTask.task.jiraTicketId,
+              orElse: () => scheduledTask.task,
+            );
+            
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => TaskDetailPage(
+                  task: updatedTask,
+                  project: _selectedProject!,
+                  projectName: scheduledTask.projectName,
+                  jiraBaseUrl: _selectedProject!.jiraBaseUrl,
+                  projectKey: _selectedProject!.extractedJiraProjectKey,
+                  onAddToSchedule: widget.onAddTaskToSchedule,
+                  onTaskUpdated: widget.onUpdateScheduledTask,
+                ),
+              ),
+            );
+          });
+        } else {
+          // For local tasks, use the scheduled task which should have the latest data
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => TaskDetailPage(
+                task: scheduledTask.task,
+                project: _selectedProject!,
+                projectName: scheduledTask.projectName,
+                jiraBaseUrl: _selectedProject!.jiraBaseUrl,
+                projectKey: _selectedProject!.extractedJiraProjectKey,
+                onAddToSchedule: widget.onAddTaskToSchedule,
+                onTaskUpdated: widget.onUpdateScheduledTask,
+              ),
             ),
-          ),
-        );
+          );
+        }
       },
       onRegisterScheduleUpdate: widget.onRegisterScheduleUpdate,
       onUnregisterScheduleUpdate: widget.onUnregisterScheduleUpdate,
@@ -2623,6 +2903,8 @@ class SharedSchedulePanel extends StatelessWidget {
   final Future<void> Function(BuildContext, ScheduledTask) onExpandTask;
   final Function(ScheduledTask, bool) onToggleAIQueue;
   final Function(int, int)? onReorder;
+  final Set<String> expandingTasks;
+  final Map<String, double> expandProgress;
 
   const SharedSchedulePanel({
     super.key,
@@ -2632,6 +2914,8 @@ class SharedSchedulePanel extends StatelessWidget {
     required this.onExpandTask,
     required this.onToggleAIQueue,
     this.onReorder,
+    required this.expandingTasks,
+    required this.expandProgress,
   });
 
   @override
@@ -2773,7 +3057,9 @@ class SharedSchedulePanel extends StatelessWidget {
                             onOpenTaskDetail: onOpenTaskDetail,
                             onExpandTask: onExpandTask,
                             onToggleAIQueue: onToggleAIQueue,
-                              ),
+                            expandingTasks: expandingTasks,
+                            progress: expandProgress[scheduledTask.id],
+                            ),
                             ),
                       );
                     },
@@ -2793,6 +3079,8 @@ class _HoverCard extends StatefulWidget {
   final Function(ScheduledTask) onOpenTaskDetail;
   final Future<void> Function(BuildContext, ScheduledTask) onExpandTask;
   final Function(ScheduledTask, bool) onToggleAIQueue;
+  final Set<String> expandingTasks;
+  final double? progress;
 
   const _HoverCard({
     super.key,
@@ -2802,6 +3090,8 @@ class _HoverCard extends StatefulWidget {
     required this.onOpenTaskDetail,
     required this.onExpandTask,
     required this.onToggleAIQueue,
+    required this.expandingTasks,
+    this.progress,
   });
 
   @override
@@ -2926,61 +3216,92 @@ class _HoverCardState extends State<_HoverCard> {
                       ),
                     ),
                   ),
-                            const SizedBox(width: 6),
-                            Text(
-                              scheduledTask.projectName,
+                  const SizedBox(width: 6),
+                  Text(
+                    scheduledTask.projectName,
                     style: TextStyle(
-                                fontSize: isSubtask ? 8 : 10,
-                                color: Colors.grey[400],
+                      fontSize: isSubtask ? 8 : 10,
+                      color: Colors.grey[400],
+                    ),
                   ),
-                ),
                 ],
                         ),
+              if (widget.expandingTasks.contains(scheduledTask.id)) ...[
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    minHeight: 3,
+                    backgroundColor: Colors.grey[800],
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.purple[300]!),
+                    value: widget.progress != null && widget.progress! > 0 && widget.progress! <= 1.0
+                        ? widget.progress!.clamp(0.0, 1.0)
+                        : null,
+                  ),
+                ),
+              ],
                       ],
                   ),
                   ),
                 ),
                 // Trailing remove button - not draggable
-                if (!isSubtask) ...[
-                  Material(
-                    color: Colors.transparent,
-                    child: IconButton(
-                      icon: Icon(
-                        Icons.auto_awesome,
-                        size: 16,
-                        color: Colors.purple[300],
+                if (!isSubtask && !scheduledTask.task.hasBeenExpandedWithAI) ...[
+                  Tooltip(
+                    message: widget.expandingTasks.contains(scheduledTask.id) 
+                        ? 'Expanding...' 
+                        : 'Expand task with AI',
+                    child: Material(
+                      color: Colors.transparent,
+                      child: IconButton(
+                        icon: Icon(
+                          Icons.auto_awesome,
+                          size: 16,
+                          color: widget.expandingTasks.contains(scheduledTask.id) 
+                              ? Colors.grey[600] 
+                              : Colors.purple[300],
+                        ),
+                        onPressed: widget.expandingTasks.contains(scheduledTask.id) 
+                            ? null 
+                            : () => widget.onExpandTask(context, scheduledTask),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
                       ),
-                      onPressed: () => widget.onExpandTask(context, scheduledTask),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
                     ),
                   ),
                   const SizedBox(width: 4),
                 ],
-                SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: Checkbox(
-                    value: scheduledTask.task.queuedForAI,
-                    onChanged: (value) => widget.onToggleAIQueue(scheduledTask, value ?? false),
-                    activeColor: Colors.purple[300],
-                    checkColor: Colors.white,
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    visualDensity: VisualDensity.compact,
+                Tooltip(
+                  message: scheduledTask.task.queuedForAI 
+                      ? 'Remove from AI queue' 
+                      : 'Add to AI queue',
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: Checkbox(
+                      value: scheduledTask.task.queuedForAI,
+                      onChanged: (value) => widget.onToggleAIQueue(scheduledTask, value ?? false),
+                      activeColor: Colors.purple[300],
+                      checkColor: Colors.white,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 4),
-                Material(
-                  color: Colors.transparent,
-                  child: IconButton(
-                    icon: Icon(
-                      Icons.remove_circle_outline,
-                      size: isSubtask ? 14 : 16,
-                      color: Colors.red[400],
+                Tooltip(
+                  message: 'Remove from schedule',
+                  child: Material(
+                    color: Colors.transparent,
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.remove_circle_outline,
+                        size: isSubtask ? 14 : 16,
+                        color: Colors.red[400],
+                      ),
+                      onPressed: () => widget.onRemoveTask(scheduledTask),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
                     ),
-                    onPressed: () => widget.onRemoveTask(scheduledTask),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
                   ),
                 ),
               ],

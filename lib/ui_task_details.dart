@@ -141,9 +141,12 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
             print('Created local subtask: ${subtask.title}');
           }
           
-          // Update the current task with the new subtasks
+          // Update the current task with the new subtasks and mark as expanded
           setState(() {
-            _task = _task.copyWith(subtasks: [..._task.subtasks, ...newSubtasks]);
+            _task = _task.copyWith(
+              subtasks: [..._task.subtasks, ...newSubtasks],
+              hasBeenExpandedWithAI: true,
+            );
           });
           widget.onTaskUpdated?.call(_task);
           
@@ -1113,41 +1116,43 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: widget.project.projectSummary != null &&
-                               widget.project.projectSummary!.isNotEmpty &&
-                               !_isExpandingTask &&
-                               !_isDraftingEmail &&
-                               (isEmailTask(_task.description) ? true : !_isExpandingTask)
-                        ? (isEmailTask(_task.description) ? _draftEmailWithAI : _expandTaskWithAI)
-                        : null,
-                      icon: _isExpandingTask || _isDraftingEmail
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                            ),
-                          )
-                        : Icon(isEmailTask(_task.description) ? Icons.email : Icons.auto_awesome),
-                      label: Text(_isExpandingTask 
-                        ? 'Expanding...' 
-                        : _isDraftingEmail 
-                          ? 'Drafting...' 
-                          : isEmailTask(_task.description) 
-                            ? 'AI Draft' 
-                            : 'AI Expand'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: isEmailTask(_task.description) ? Colors.blue : Colors.purple,
-                        foregroundColor: Colors.white,
-                        disabledBackgroundColor: Colors.grey[300],
-                        disabledForegroundColor: Colors.grey[600],
+                  if (!_task.isSubtask && !_task.hasBeenExpandedWithAI) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: widget.project.projectSummary != null &&
+                                 widget.project.projectSummary!.isNotEmpty &&
+                                 !_isExpandingTask &&
+                                 !_isDraftingEmail &&
+                                 (isEmailTask(_task.description) ? true : !_isExpandingTask)
+                          ? (isEmailTask(_task.description) ? _draftEmailWithAI : _expandTaskWithAI)
+                          : null,
+                        icon: _isExpandingTask || _isDraftingEmail
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : Icon(isEmailTask(_task.description) ? Icons.email : Icons.auto_awesome),
+                        label: Text(_isExpandingTask 
+                          ? 'Expanding...' 
+                          : _isDraftingEmail 
+                            ? 'Drafting...' 
+                            : isEmailTask(_task.description) 
+                              ? 'AI Draft' 
+                              : 'AI Expand'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: isEmailTask(_task.description) ? Colors.blue : Colors.purple,
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor: Colors.grey[300],
+                          disabledForegroundColor: Colors.grey[600],
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
